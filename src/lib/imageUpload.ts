@@ -1,4 +1,4 @@
-// Turns an uploaded image into a small JPEG data URL that fits comfortably in localStorage.
+// Turns an uploaded image into a small JPEG data URL that fits comfortably in a database record.
 // Images are scaled so the longest side is at most MAX_SIDE pixels.
 
 const MAX_SIDE = 800;

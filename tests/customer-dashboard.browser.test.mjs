@@ -7,7 +7,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { chromium } from "playwright-core";
-import { TEST_PASSWORD, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
+import { TEST_PASSWORD, TEST_SETUP_KEY, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
 
 const CHROME = process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const NEW_PASSWORD = "NewPass456";
@@ -51,7 +51,7 @@ before(async () => {
   base = env.base;
 
   const admin = await json("POST", `${base}/api/admin/accounts`, {
-    body: { name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
+    body: { setupKey: TEST_SETUP_KEY, name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
   });
   assert.equal(admin.status, 201);
   adminCookie = cookieFrom(admin.res, "meg_admin_session");
@@ -85,7 +85,7 @@ describe("signing in and the overview", () => {
   test("logging in through the form opens the dashboard", async () => {
     await page.goto(`${base}/login`, { waitUntil: "networkidle" });
     await page.getByLabel("Email").fill(customer.email);
-    await page.getByLabel("Password").fill(TEST_PASSWORD);
+    await page.getByLabel("Password", { exact: true }).fill(TEST_PASSWORD);
     await page.getByRole("button", { name: "Log in" }).click();
     await page.waitForURL(/\/account$/);
     await page.getByRole("heading", { name: "Welcome back, Browser" }).waitFor();
@@ -294,7 +294,7 @@ describe("phone layout", () => {
     try {
       await mobile.goto(`${base}/login`, { waitUntil: "networkidle" });
       await mobile.getByLabel("Email").fill(customer.email);
-      await mobile.getByLabel("Password").fill(NEW_PASSWORD);
+      await mobile.getByLabel("Password", { exact: true }).fill(NEW_PASSWORD);
       await mobile.getByRole("button", { name: "Log in" }).click();
       await mobile.waitForURL(/\/account$/);
       for (const path of ["/account", "/account/orders", "/account/addresses", "/account/support"]) {

@@ -8,8 +8,8 @@ import { customerRequest, useCustomerData, type CustomerRequestResult } from "@/
 import { fieldClass, ghostClass, panelClass, Pill, primaryClass } from "@/components/admin/EmployeesView";
 import { RestaurantLogo, type RestaurantCard } from "@/components/admin/RestaurantsView";
 import { canAccess } from "@/lib/permissions";
-import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
-import { useSession } from "@/lib/local/useSession";
+import { getAdminSession, type StaffSession } from "@/lib/sessionClient";
+import { useSession } from "@/lib/useSession";
 import { isCancelled, isDelivered, statusLabel } from "@/lib/orderStatus";
 import type { Order } from "@/types";
 
@@ -104,17 +104,6 @@ function RestaurantDetailView({ restaurantId }: { restaurantId: string }) {
   const url = `/api/admin/restaurants/${encodeURIComponent(restaurantId)}?date=${attendanceDate}`;
   const detail = useCustomerData<DetailResponse>(url, { intervalMs: 5000, while: () => true });
   const [notice, setNotice] = useState<Notice>(null);
-  const { reload } = detail;
-
-  // Records live in this browser's storage. When another tab changes them (for example a rider's
-  // device sharing its location), re-read at once instead of waiting for the next 5-second refresh.
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === null || e.key.startsWith("meg-local:")) reload();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [reload]);
 
   const act: Act = async (method, requestUrl, body, success) => {
     const result = await customerRequest(requestUrl, method, body);

@@ -1,7 +1,7 @@
 import { isCancelled, statusLabel } from "@/lib/orderStatus";
 import type { Order } from "@/types";
 
-// Sales reporting over the orders saved in localStorage. All dates are the browser's local
+// Sales reporting over the orders loaded from the server. All dates are the browser's local
 // calendar days, so "today" matches what the admin sees on their clock.
 
 export type Period = "daily" | "weekly" | "monthly";

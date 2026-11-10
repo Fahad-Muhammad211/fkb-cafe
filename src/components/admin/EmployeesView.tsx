@@ -7,10 +7,23 @@ import { customerRequest, useCustomerData } from "@/components/customer/useCusto
 import { DeleteOwnerDialog, dangerClass } from "@/components/admin/DeleteOwnerDialog";
 import type { StaffRole } from "@/lib/permissions";
 import { isValidName, isValidPassword } from "@/lib/validation";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 
-// Owner screen. The data handlers check the signed-in owner on every request below; this screen only draws it.
+// Admin screen for staff accounts. The Admin adds Owners and Managers here; each belongs to one
+// restaurant and signs in at /login to the restaurant dashboard. The data handlers check the signed-in
+// Admin on every request below; this screen only draws it.
 
-// Same shape as StaffMember in lib/local/adminAccounts.ts.
+const ROLE_LABELS: Record<StaffRole, string> = { admin: "Admin", owner: "Owner", manager: "Manager" };
+
+const ROLE_NOTES: Record<StaffRole, string> = {
+  admin: "The Admin has access to every area of the Admin dashboard.",
+  owner: "Owners run their restaurant in the restaurant dashboard. They have no Admin access.",
+  manager: "Managers use the restaurant dashboard for their restaurant only. They have no Admin access.",
+};
+
+type NewAccountKind = "owner" | "manager";
+
+// Same shape as StaffMember in lib/server/adminAccounts.ts.
 interface StaffMember {
   id: string;
   name: string;
@@ -22,7 +35,7 @@ interface StaffMember {
   restaurantName: string | null;
 }
 
-// A restaurant from the Restaurants page (the fields of Restaurant in lib/local/restaurants.ts used here).
+// A restaurant from the Restaurants page (the fields of Restaurant in lib/server/restaurants.ts used here).
 export interface RestaurantOption {
   id: string;
   name: string;
@@ -53,7 +66,7 @@ export function EmployeesView({ currentId }: { currentId: string }) {
   const { data, error, loading, reload } = useCustomerData<{ staff: StaffMember[] }>("/api/admin/employees");
   const restaurantsState = useCustomerData<{ restaurants: RestaurantOption[] }>("/api/admin/restaurants");
   const restaurants = restaurantsState.data?.restaurants ?? [];
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<NewAccountKind | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [deleting, setDeleting] = useState<StaffMember | null>(null);
@@ -81,14 +94,20 @@ export function EmployeesView({ currentId }: { currentId: string }) {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owners</p>
           <h1 className="mt-1 text-3xl font-black uppercase tracking-tight md:text-4xl">Employees</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-400">
-            Every account is an owner with access to every area, including finance and staff.
+            Add Owners and Managers for your restaurants. They sign in at /login and work in their restaurant&apos;s dashboard only.
           </p>
         </div>
         {!adding && (
-          <button type="button" onClick={() => setAdding(true)} className={primaryClass}>
-            <UserPlus className="h-4 w-4" aria-hidden="true" />
-            Add owner
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setAdding("owner")} className={primaryClass}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              Add owner
+            </button>
+            <button type="button" onClick={() => setAdding("manager")} className={primaryClass}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              Add manager
+            </button>
+          </div>
         )}
       </header>
 
@@ -99,14 +118,16 @@ export function EmployeesView({ currentId }: { currentId: string }) {
       )}
 
       {adding && (
-        <AddOwnerForm
+        <AddAccountForm
+          key={adding}
+          kind={adding}
           restaurants={restaurants}
           restaurantsLoading={restaurantsState.loading}
           restaurantsError={restaurantsState.error}
-          onCancel={() => setAdding(false)}
+          onCancel={() => setAdding(null)}
           onCreated={(name) => {
-            setAdding(false);
-            setNotice({ tone: "success", text: `${name} was added as an owner.` });
+            setNotice({ tone: "success", text: `${name} was added as ${adding === "manager" ? "a manager" : "an owner"}.` });
+            setAdding(null);
             reload();
           }}
         />
@@ -131,7 +152,7 @@ export function EmployeesView({ currentId }: { currentId: string }) {
                       <Link href={`/admin/employees/${encodeURIComponent(member.id)}`} className="text-lg font-black hover:text-orange-400">
                         {member.name}
                       </Link>
-                      <Pill tone="orange">Owner</Pill>
+                      <Pill tone="orange">{ROLE_LABELS[member.role]}</Pill>
                       {isSelf && <Pill tone="zinc">You</Pill>}
                       <Pill tone={member.active ? "green" : "red"}>{member.active ? "Active" : "Switched off"}</Pill>
                       {member.restaurantName ? <Pill tone="orange">{member.restaurantName}</Pill> : <Pill tone="red">No restaurant assigned</Pill>}
@@ -169,7 +190,7 @@ export function EmployeesView({ currentId }: { currentId: string }) {
 
                 <p className="mt-4 flex items-center gap-2 text-sm text-zinc-300">
                   <ShieldCheck className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                  Owners have access to every area, including finance and staff.
+                  {ROLE_NOTES[member.role]}
                 </p>
               </li>
             );
@@ -197,13 +218,17 @@ export function EmployeesView({ currentId }: { currentId: string }) {
   );
 }
 
-function AddOwnerForm({
+// Form for a new Owner (Full name, Gmail, Password, Confirm) or Manager (Full name, Gmail, Password).
+// Both belong to one restaurant. Field ids are "owner-…" or "manager-…".
+function AddAccountForm({
+  kind,
   restaurants,
   restaurantsLoading,
   restaurantsError,
   onCancel,
   onCreated,
 }: {
+  kind: NewAccountKind;
   restaurants: RestaurantOption[];
   restaurantsLoading: boolean;
   restaurantsError: string | null;
@@ -215,25 +240,35 @@ function AddOwnerForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const noRestaurants = !restaurantsLoading && !restaurantsError && restaurants.length === 0;
+  const fields = kind === "manager" ? (["name", "email", "password"] as const) : (["name", "email", "password", "confirm"] as const);
+  const label = kind === "manager" ? "manager" : "owner";
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const found: Record<string, string> = {};
     const nameError = isValidName(values.name);
     if (nameError) found.name = nameError;
-    if (!values.email.trim()) found.email = "Enter the owner's Gmail address.";
+    if (!values.email.trim()) found.email = `Enter the ${label}'s Gmail address.`;
     const passwordError = isValidPassword(values.password);
     if (passwordError) found.password = passwordError;
-    else if (values.confirm !== values.password) found.confirm = "Passwords do not match.";
-    if (!restaurantId) found.restaurantId = "Choose the restaurant this owner belongs to.";
+    else if (kind === "owner" && values.confirm !== values.password) found.confirm = "Passwords do not match.";
+    if (!restaurantId) found.restaurantId = `Choose the restaurant this ${label} belongs to.`;
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 
     setPending(true);
-    const result = await customerRequest<{ account: { name: string } }>("/api/admin/accounts", "POST", {
-      ...values,
-      restaurantId,
-    });
+    const result =
+      kind === "manager"
+        ? await customerRequest<{ account: { name: string } }>("/api/admin/managers", "POST", {
+            name: values.name,
+            email: values.email,
+            password: values.password,
+            restaurantId,
+          })
+        : await customerRequest<{ account: { name: string } }>("/api/admin/accounts", "POST", {
+            ...values,
+            restaurantId,
+          });
     setPending(false);
     if (result.ok) {
       onCreated(result.data.account.name);
@@ -245,7 +280,7 @@ function AddOwnerForm({
   return (
     <form onSubmit={handleSubmit} noValidate className={`${panelClass} flex flex-col gap-5`}>
       <div className="flex items-center justify-between">
-        <h2 className="font-bold">New owner</h2>
+        <h2 className="font-bold">{kind === "manager" ? "New manager" : "New owner"}</h2>
         <button type="button" onClick={onCancel} aria-label="Close" className="rounded-full p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white">
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
@@ -253,24 +288,35 @@ function AddOwnerForm({
       {errors.form && <p role="alert" className="text-sm text-red-300">{errors.form}</p>}
 
       <div className="grid gap-4 md:grid-cols-2">
-        {(["name", "email", "password", "confirm"] as const).map((key) => {
+        {fields.map((key) => {
           const labels = { name: "Full name", email: "Gmail address", password: "Password", confirm: "Confirm password" } as const;
           const types = { name: "text", email: "email", password: "password", confirm: "password" } as const;
           return (
             <div key={key} className="flex flex-col gap-1.5">
-              <label htmlFor={`owner-${key}`} className="text-sm font-semibold text-zinc-200">
+              <label htmlFor={`${kind}-${key}`} className="text-sm font-semibold text-zinc-200">
                 {labels[key]}
               </label>
-              <input
-                id={`owner-${key}`}
-                type={types[key]}
-                autoComplete={key === "email" ? "off" : "new-password"}
-                placeholder={key === "email" ? "owner@gmail.com" : undefined}
-                value={values[key]}
-                onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
-                aria-invalid={Boolean(errors[key])}
-                className={fieldClass}
-              />
+              {types[key] === "password" ? (
+                <PasswordInput
+                  id={`${kind}-${key}`}
+                  autoComplete="new-password"
+                  value={values[key]}
+                  onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
+                  aria-invalid={Boolean(errors[key])}
+                  className={fieldClass}
+                />
+              ) : (
+                <input
+                  id={`${kind}-${key}`}
+                  type={types[key]}
+                  autoComplete={key === "email" ? "off" : "new-password"}
+                  placeholder={key === "email" ? `${label}@gmail.com` : undefined}
+                  value={values[key]}
+                  onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
+                  aria-invalid={Boolean(errors[key])}
+                  className={fieldClass}
+                />
+              )}
               {errors[key] && <p className="text-xs text-red-300">{errors[key]}</p>}
             </div>
           );
@@ -278,11 +324,11 @@ function AddOwnerForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="owner-restaurantId" className="text-sm font-semibold text-zinc-200">
+        <label htmlFor={`${kind}-restaurantId`} className="text-sm font-semibold text-zinc-200">
           Restaurant
         </label>
         <select
-          id="owner-restaurantId"
+          id={`${kind}-restaurantId`}
           value={restaurantId}
           onChange={(e) => setRestaurantId(e.target.value)}
           disabled={restaurants.length === 0}
@@ -303,7 +349,7 @@ function AddOwnerForm({
             <Link href="/admin/restaurants" className="underline hover:text-amber-200">
               Restaurants page
             </Link>
-            . Every owner added here must belong to a restaurant.
+            . Every {label} added here must belong to a restaurant.
           </p>
         )}
         {errors.restaurantId && <p className="text-xs text-red-300">{errors.restaurantId}</p>}
@@ -312,7 +358,7 @@ function AddOwnerForm({
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={pending || restaurants.length === 0} className={primaryClass}>
           <UserPlus className="h-4 w-4" aria-hidden="true" />
-          {pending ? "Adding…" : "Add owner"}
+          {pending ? "Adding…" : kind === "manager" ? "Add manager" : "Add owner"}
         </button>
         <button type="button" onClick={onCancel} className={ghostClass}>
           Cancel

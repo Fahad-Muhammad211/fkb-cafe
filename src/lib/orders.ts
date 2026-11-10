@@ -1,11 +1,10 @@
-import { createStorageStore, writeJSON } from "@/lib/storage";
+import { createMemoryStore } from "@/lib/storage";
 import type { CartLine, Order } from "@/types";
 
-export const ORDERS_STORAGE_KEY = "meg-orders-v1";
-
-// Shared store so the history and detail views update when an order changes.
-// Orders are kept in the local store; this list is a copy for this browser.
-export const ordersStore = createStorageStore(ORDERS_STORAGE_KEY);
+// Shared store so the history and detail views update when an order changes. Orders live in MongoDB;
+// this is the page's in-memory copy of the ones the caller may see. It is never written to the browser's
+// storage. The snapshot is undefined until the first load (see DataSync).
+export const ordersStore = createMemoryStore();
 
 export function parseOrders(raw: string | null | undefined): Order[] {
   if (!raw) return [];
@@ -18,14 +17,18 @@ export function parseOrders(raw: string | null | undefined): Order[] {
 }
 
 function readOrders(): Order[] {
-  return parseOrders(window.localStorage.getItem(ORDERS_STORAGE_KEY));
+  return parseOrders(ordersStore.getSnapshot());
 }
 
-// Replaces the browser copy of the order list (used when loading orders from the server).
-export function saveAllOrders(orders: Order[]): boolean {
-  const saved = writeJSON(ORDERS_STORAGE_KEY, orders);
-  ordersStore.notify();
-  return saved;
+// Replaces the in-memory order list (used when loading orders from the server).
+export function saveAllOrders(orders: Order[]): void {
+  ordersStore.set(orders);
+}
+
+// Marks the list as loaded without orders from the server (guests have no order history), so pages
+// stop showing their loading state. Orders placed during this visit stay in the list.
+export function markOrdersLoaded(): void {
+  if (!ordersStore.loaded()) ordersStore.set([]);
 }
 
 // Puts one order from the server into the browser copy, keeping newest first.
@@ -49,7 +52,7 @@ export type OrderActionResult = { ok: true; order: Order } | { ok: false; error:
 
 type ApiBody = { order?: Order; error?: string; errors?: Record<string, string> };
 
-// Sends one request and reads the server's { error, errors? } shape. Updates the browser copy on success.
+// Sends one request and reads the server's { error, errors? } shape. Updates the in-memory copy on success.
 async function orderRequest(url: string, method: "POST" | "PATCH", body?: unknown): Promise<OrderActionResult> {
   try {
     const res = await fetch(url, {
@@ -65,7 +68,7 @@ async function orderRequest(url: string, method: "POST" | "PATCH", body?: unknow
     }
     return { ok: false, error: data?.error ?? "Something went wrong. Please try again.", errors: data?.errors };
   } catch {
-    return { ok: false, error: "Could not load or save data in this browser. Reload the page and try again." };
+    return { ok: false, error: "Could not reach the server. Check your connection and try again." };
   }
 }
 
@@ -93,8 +96,8 @@ export function setOrderProgress(id: string, step: number): Promise<OrderActionR
   return orderRequest(`/api/orders/${encodeURIComponent(id)}`, "PATCH", { statusOverride: step });
 }
 
-// Fetches orders from the server into this browser. Returns null when the request fails or
-// the caller is not allowed to see them, so the cached copy is left alone.
+// Fetches orders from the server. Returns null when the request fails or the caller is not allowed
+// to see them, so the in-memory copy is left alone.
 export async function fetchOrders(scope: "admin" | "customer"): Promise<Order[] | null> {
   try {
     const url = scope === "admin" ? "/api/admin/orders" : "/api/orders";

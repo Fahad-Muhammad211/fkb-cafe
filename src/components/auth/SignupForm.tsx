@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { validateSignupFields } from "@/lib/validation";
 import type { AuthErrors } from "@/lib/auth";
 
@@ -59,16 +60,28 @@ export function SignupForm() {
     const id = FIELD_IDS[key];
     return (
       <FormField id={id} label={label} error={errors[key]} hint={hint}>
-        <input
-          id={id}
-          type={type}
-          autoComplete={autoComplete}
-          value={values[key]}
-          onChange={(e) => update(key, e.target.value)}
-          aria-invalid={Boolean(errors[key])}
-          aria-describedby={describedBy(id, errors[key], hint)}
-          className={inputClass}
-        />
+        {type === "password" ? (
+          <PasswordInput
+            id={id}
+            autoComplete={autoComplete}
+            value={values[key]}
+            onChange={(e) => update(key, e.target.value)}
+            aria-invalid={Boolean(errors[key])}
+            aria-describedby={describedBy(id, errors[key], hint)}
+            className={inputClass}
+          />
+        ) : (
+          <input
+            id={id}
+            type={type}
+            autoComplete={autoComplete}
+            value={values[key]}
+            onChange={(e) => update(key, e.target.value)}
+            aria-invalid={Boolean(errors[key])}
+            aria-describedby={describedBy(id, errors[key], hint)}
+            className={inputClass}
+          />
+        )}
       </FormField>
     );
   };

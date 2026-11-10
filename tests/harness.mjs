@@ -1,69 +1,84 @@
-// Shared test harness: starts `next start` against a throwaway database (meg_test_<random>) and drops
-// that database when the tests finish. The real database (MONGODB_DB) is only counted before and after,
-// to prove the tests did not change it.
+// Shared test harness: starts a throwaway MongoDB server (mongodb-memory-server, a real mongod running
+// in memory on this machine) and `next start` connected to it. The tests never connect to the database
+// in .env.local: MONGODB_URI, MONGODB_DB and ADMIN_SETUP_KEY are set on the server process, and
+// process environment variables take precedence over .env.local in Next.js.
+//
+// Run: npm run build, then npm test.
 
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { MongoClient } from "mongodb";
+import { MongoMemoryServer } from "mongodb-memory-server";
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
+export const TEST_SETUP_KEY = "test-setup-key-0123456789abcdef";
+const TEST_DB = "meg_test";
 
-export async function startTestEnvironment() {
-  if (!process.env.MONGODB_URI) throw new Error("MONGODB_URI is not set. Run the tests with --env-file=.env.local (npm test does this).");
+// Options: setupKey — the ADMIN_SETUP_KEY for the server; null starts it without one.
+//          env — extra environment variables for the server (for example TRUSTED_PROXY_HOPS).
+export async function startTestEnvironment({ setupKey = TEST_SETUP_KEY, env: extraEnv = {} } = {}) {
   if (!existsSync(path.join(ROOT, ".next", "BUILD_ID"))) throw new Error("No production build found. Run npm run build first.");
 
-  const realDb = process.env.MONGODB_DB || "meg";
-  const testDb = `meg_test_${randomBytes(4).toString("hex")}`;
-  if (!testDb.startsWith("meg_test_") || testDb === realDb) throw new Error("Refusing to run: the test database name is not isolated.");
+  const mongo = await MongoMemoryServer.create();
+  const uri = mongo.getUri();
+  if (!/^mongodb:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(uri)) {
+    await mongo.stop();
+    throw new Error("Refusing to run: the test database is not a local in-memory server.");
+  }
 
-  const port = 3800 + Math.floor(Math.random() * 500);
+  const port = 3800 + Math.floor(Math.random() * 1000);
   const base = `http://localhost:${port}`;
-
-  const realClient = new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
-  await realClient.connect();
-  const realCountsBefore = await countReal(realClient, realDb);
-
-  const client = new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 10000 });
   await client.connect();
+  const db = client.db(TEST_DB);
 
   const server = spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)], {
     cwd: ROOT,
-    env: { ...process.env, MONGODB_DB: testDb, NEXT_TELEMETRY_DISABLED: "1" },
+    // TRUSTED_PROXY_HOPS is cleared unless a test sets it, so a value in the shell cannot change results.
+    env: { ...process.env, TRUSTED_PROXY_HOPS: "", ...extraEnv, MONGODB_URI: uri, MONGODB_DB: TEST_DB, ADMIN_SETUP_KEY: setupKey ?? "", NEXT_TELEMETRY_DISABLED: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  server.stderr.on("data", () => {});
+  const serverLog = [];
+  server.stdout.on("data", (chunk) => serverLog.push(String(chunk)));
+  server.stderr.on("data", (chunk) => serverLog.push(String(chunk)));
 
-  await waitForServer(base);
+  try {
+    await waitForServer(base);
+  } catch (err) {
+    stopServer(server);
+    await client.close();
+    await mongo.stop();
+    throw new Error(`${err.message}\n${serverLog.join("")}`);
+  }
 
   return {
     base,
-    db: client.db(testDb),
-    testDb,
+    db,
+    serverLog,
+    // Empties every collection (indexes are kept), so the next test starts from a fresh install.
+    async reset() {
+      for (const { name } of await db.listCollections({}, { nameOnly: true }).toArray()) {
+        await db.collection(name).deleteMany({});
+      }
+    },
     async stop() {
-      if (server.pid) {
-        if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-        else server.kill("SIGTERM");
-      }
-      if (testDb.startsWith("meg_test_") && testDb !== realDb) await client.db(testDb).dropDatabase();
+      stopServer(server);
       await client.close();
-      const countsAfter = await countReal(realClient, realDb);
-      await realClient.close();
-      if (JSON.stringify(countsAfter) !== JSON.stringify(realCountsBefore)) {
-        throw new Error(`The real database changed during the tests: ${JSON.stringify(realCountsBefore)} -> ${JSON.stringify(countsAfter)}`);
-      }
+      await mongo.stop();
     },
   };
 }
 
-async function countReal(client, dbName) {
-  const db = client.db(dbName);
-  return {
-    admins: await db.collection("admins").countDocuments(),
-    customers: await db.collection("customers").countDocuments(),
-    orders: await db.collection("orders").countDocuments(),
-  };
+function stopServer(server) {
+  if (!server.pid) return;
+  try {
+    if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" });
+    else server.kill("SIGTERM");
+  } catch {
+    // Already stopped.
+  }
 }
 
 async function waitForServer(base) {
@@ -89,6 +104,11 @@ export function cookieFrom(res, name) {
   return found ? found.split(";")[0] : null;
 }
 
+// The full Set-Cookie header for one cookie, or null.
+export function setCookieHeader(res, name) {
+  return res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`)) ?? null;
+}
+
 export async function signUpCustomer(base, overrides = {}) {
   const email = overrides.email ?? randomCustomerEmail();
   const res = await fetch(`${base}/api/customers`, {
@@ -98,6 +118,19 @@ export async function signUpCustomer(base, overrides = {}) {
   });
   const body = await res.json();
   return { res, status: res.status, body, email, cookie: cookieFrom(res, "meg_customer_session") };
+}
+
+// Creates the first Admin through the setup route, sending only what the sign-up form sends (Full Name,
+// Email, Password). The server allows it only while it has ADMIN_SETUP_KEY configured and no Admin exists.
+export async function createFirstAdmin(base, overrides = {}) {
+  const email = overrides.email ?? randomGmail();
+  const res = await fetch(`${base}/api/admin/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: overrides.name ?? "Setup Admin", email, password: TEST_PASSWORD, ...overrides.extra }),
+  });
+  const body = await res.json().catch(() => null);
+  return { res, status: res.status, body, email, cookie: cookieFrom(res, "meg_admin_session") };
 }
 
 export async function json(method, url, { cookie, body } = {}) {

@@ -4,7 +4,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { TEST_PASSWORD, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
+import { TEST_PASSWORD, TEST_SETUP_KEY, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
 
 const DASHBOARD_PAGES = [
   "/account",
@@ -48,7 +48,7 @@ before(async () => {
 
   // The first admin on an empty database is created by the initial-setup route.
   const admin = await json("POST", `${base}/api/admin/accounts`, {
-    body: { name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
+    body: { setupKey: TEST_SETUP_KEY, name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
   });
   assert.equal(admin.status, 201, "initial admin setup");
   adminCookie = cookieFrom(admin.res, "meg_admin_session");
@@ -68,11 +68,16 @@ after(async () => {
 });
 
 describe("routes and sessions", () => {
-  test("signed-out visitors are redirected to login from every dashboard page", async () => {
+  // Dashboard pages are guarded in the browser (CustomerGuard sends signed-out visitors to /login; that
+  // redirect is covered by the browser tests) and every customer API checks the session on the server.
+  // So the page shell served to a signed-out visitor must carry no customer data.
+  test("signed-out visitors get no customer data from any dashboard page", async () => {
     for (const path of [...DASHBOARD_PAGES, "/account/orders/MEG-000001"]) {
       const res = await fetch(`${base}${path}`, { redirect: "manual" });
-      assert.equal(res.status, 307, `${path} should redirect`);
-      assert.match(res.headers.get("location") ?? "", /\/login$/, `${path} should go to login`);
+      assert.ok(res.status < 500, `${path} answered ${res.status}`);
+      const html = await res.text();
+      assert.equal(html.includes(alice.email), false, `${path} leaked a customer's email`);
+      assert.equal(html.includes("Alice Shopper"), false, `${path} leaked a customer's name`);
     }
   });
 
@@ -103,9 +108,12 @@ describe("routes and sessions", () => {
   });
 
   test("customers cannot reach admin pages or admin APIs", async () => {
+    // /admin is guarded in the browser (AdminGuard); the server-side guarantee is that no admin data or
+    // session reaches a customer.
     const page = await fetch(`${base}/admin`, { headers: { cookie: alice.cookie }, redirect: "manual" });
-    assert.equal(page.status, 307);
-    assert.match(page.headers.get("location") ?? "", /\/admin\/login$/);
+    assert.ok(page.status < 500);
+    assert.equal(await page.text().then((html) => html.includes("Test Admin")), false, "the admin page shell carries no admin data");
+    assert.equal((await json("GET", `${base}/api/admin/session`, { cookie: alice.cookie })).data.session, null);
 
     const api = await json("GET", `${base}/api/admin/orders`, { cookie: alice.cookie });
     assert.equal(api.status, 401);

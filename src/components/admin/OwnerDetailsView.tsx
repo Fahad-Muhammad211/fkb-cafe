@@ -8,11 +8,13 @@ import { fieldClass, ghostClass, panelClass, Pill, primaryClass, type Restaurant
 import { DeleteOwnerDialog, dangerClass } from "@/components/admin/DeleteOwnerDialog";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
 import { canAccess, type StaffRole } from "@/lib/permissions";
-import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
-import { useSession } from "@/lib/local/useSession";
+import { getAdminSession, type StaffSession } from "@/lib/sessionClient";
+import { useSession } from "@/lib/useSession";
 
 // Page for one owner: profile, restaurant, team and activity history.
 // The data handlers return only this owner's own staff and history, and check the signed-in owner on every request.
+
+const ROLE_LABELS: Record<StaffRole, string> = { admin: "Admin", owner: "Owner", manager: "Manager" };
 
 interface OwnerView {
   id: string;
@@ -162,7 +164,7 @@ function OwnerContent({
   return (
     <>
       <header className="flex flex-col gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owner</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">{ROLE_LABELS[owner.role]}</p>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-3xl font-black tracking-tight md:text-4xl">{owner.name}</h1>
           <Pill tone={owner.active ? "green" : "red"}>{owner.active ? "Active" : "Switched off"}</Pill>
@@ -197,7 +199,7 @@ function OwnerContent({
           <dl className="grid gap-3 text-sm">
             <Row label="Full name" value={owner.name} />
             <Row label="Gmail address" value={owner.email} />
-            <Row label="Role" value="Owner" />
+            <Row label="Role" value={ROLE_LABELS[owner.role]} />
             <Row label="Status" value={owner.active ? "Active" : "Switched off"} />
             <Row label="Added" value={formatDateTime(owner.createdAt)} />
           </dl>

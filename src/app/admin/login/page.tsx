@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { AdminLoginGate } from "@/components/auth/SessionGates";
+import { AdminAuthGate } from "@/components/auth/SessionGates";
 
 export const metadata: Metadata = {
   title: "Admin login | Restaurant Management System",
   robots: { index: false, follow: false },
 };
 
-// Signed-in admins go straight to the dashboard.
+// Login by default, with a Sign Up view for the first Admin. Signed-in accounts go straight to their dashboard.
 export default function AdminLoginPage() {
-  return <AdminLoginGate />;
+  return <AdminAuthGate />;
 }

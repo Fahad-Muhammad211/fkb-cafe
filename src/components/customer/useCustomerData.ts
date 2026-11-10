@@ -45,7 +45,7 @@ export function useCustomerData<T>(url: string, poll?: { intervalMs: number; whi
         else setState({ data: null, error: body?.error ?? "We could not load this information.", loading: false });
       })
       .catch(() => {
-        if (active) setState({ data: null, error: "Could not load your account data in this browser. Reload the page and try again.", loading: false });
+        if (active) setState({ data: null, error: "Could not reach the server. Check your connection and try again.", loading: false });
       });
     return () => {
       active = false;
@@ -79,6 +79,6 @@ export async function customerRequest<T = Record<string, unknown>>(
     if (res.ok && data) return { ok: true, data };
     return { ok: false, error: data?.error ?? "Something went wrong. Please try again.", errors: data?.errors };
   } catch {
-    return { ok: false, error: "Could not load your account data in this browser. Reload the page and try again." };
+    return { ok: false, error: "Could not reach the server. Check your connection and try again." };
   }
 }

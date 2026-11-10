@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AnalyticsView } from "@/components/admin/AnalyticsView";
-import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
-import { useSession } from "@/lib/local/useSession";
+import { getAdminSession, type StaffSession } from "@/lib/sessionClient";
+import { useSession } from "@/lib/useSession";
 
 // Owners see the finance dashboard. Signed-out visitors go to the admin login.
 export function AdminHomeGate() {

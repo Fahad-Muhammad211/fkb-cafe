@@ -7,11 +7,12 @@ import { adminLoginRequest, adminSignupRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
 import { isValidName, isValidPassword } from "@/lib/validation";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 
 type Errors = Record<string, string>;
 
-// Shared full-page frame for the admin login and signup screens.
-function AuthFrame({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer: ReactNode }) {
+// Shared full-page frame for the admin login and sign-up views.
+function AuthFrame({ title, children, footer }: { title: string; children: ReactNode; footer: ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col bg-zinc-950 text-white">
       <header className="flex items-center justify-between px-4 py-4 md:px-8">
@@ -31,7 +32,6 @@ function AuthFrame({ title, subtitle, children, footer }: { title: string; subti
               RMS
             </span>
             <h1 className="text-3xl font-black uppercase tracking-tight">{title}</h1>
-            <p className="text-sm text-zinc-400">{subtitle}</p>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl shadow-black/40 md:p-8">{children}</div>
           <div className="mt-6 text-center text-sm text-zinc-400">{footer}</div>
@@ -50,7 +50,22 @@ function ErrorBanner({ message }: { message: string | null }) {
   );
 }
 
-export function AdminLoginForm({ showSignupLink = true }: { showSignupLink?: boolean }) {
+// "Don't have an account? Sign Up" / "Already have an account? Login": switches views in place.
+function SwitchView({ prompt, label, onClick }: { prompt: string; label: string; onClick: () => void }) {
+  return (
+    <>
+      {prompt}{" "}
+      <button type="button" onClick={onClick} className="font-semibold text-white underline-offset-4 hover:underline">
+        {label}
+      </button>
+    </>
+  );
+}
+
+const submitClass =
+  "rounded-full bg-[#ffd400] px-6 py-3 text-sm font-bold text-black transition-all duration-200 hover:brightness-95 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70";
+
+export function AdminLoginForm({ onSignUp }: { onSignUp: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Errors>({});
@@ -59,7 +74,7 @@ export function AdminLoginForm({ showSignupLink = true }: { showSignupLink?: boo
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const found: Errors = {};
-    if (!email.trim()) found.email = "Please enter your Gmail address.";
+    if (!email.trim()) found.email = "Please enter your email.";
     if (!password) found.password = "Please enter your password.";
     setErrors(found);
     if (Object.keys(found).length > 0) {
@@ -72,34 +87,22 @@ export function AdminLoginForm({ showSignupLink = true }: { showSignupLink?: boo
     setPending(false);
     if (result.ok) {
       setPassword("");
-      // Full page load so the server guard re-checks the new session cookie.
+      // Full page load so the server guard re-checks the new session cookie. The server says where
+      // this account belongs: the Admin dashboard, or the Owner dashboard for an Owner.
       // Shared browsers keep no order list from the previous staff member.
       saveAllOrders([]);
-      window.location.replace("/admin");
+      window.location.replace(result.redirect);
     } else {
       setErrors(result.errors);
     }
   };
 
   return (
-    <AuthFrame
-      title="Admin login"
-      subtitle="Sign in with your registered Gmail address and password."
-      footer={
-        showSignupLink ? (
-          <>
-            No admin account yet?{" "}
-            <Link href="/admin/signup" className="font-semibold text-white underline-offset-4 hover:underline">
-              Create one
-            </Link>
-          </>
-        ) : null
-      }
-    >
+    <AuthFrame title="Admin Login" footer={<SwitchView prompt="Don't have an account?" label="Sign Up" onClick={onSignUp} />}>
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         <ErrorBanner message={errors.form ?? null} />
 
-        <FormField id="admin-login-email" label="Gmail address" error={errors.email}>
+        <FormField id="admin-login-email" label="Email" error={errors.email}>
           <input
             id="admin-login-email"
             type="email"
@@ -114,9 +117,8 @@ export function AdminLoginForm({ showSignupLink = true }: { showSignupLink?: boo
         </FormField>
 
         <FormField id="admin-login-password" label="Password" error={errors.password}>
-          <input
+          <PasswordInput
             id="admin-login-password"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -126,24 +128,25 @@ export function AdminLoginForm({ showSignupLink = true }: { showSignupLink?: boo
           />
         </FormField>
 
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-full bg-[#ffd400] px-6 py-3 text-sm font-bold text-black transition-all duration-200 hover:brightness-95 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
-        >
-          {pending ? "Signing in…" : "Log in"}
+        <button type="submit" disabled={pending} className={submitClass}>
+          {pending ? "Logging in…" : "Login"}
         </button>
       </form>
     </AuthFrame>
   );
 }
 
-export function AdminSignupForm() {
-  const [values, setValues] = useState({ name: "", email: "", password: "", confirm: "" });
+const EMPTY_SIGNUP = { name: "", email: "", password: "" };
+type SignupValues = typeof EMPTY_SIGNUP;
+
+// First-Admin sign-up: Full Name, Email, Password. The server only accepts it while no Admin exists and
+// ADMIN_SETUP_KEY is configured in its environment. The key never appears in, or leaves for, the browser.
+export function AdminSignupForm({ onLogin }: { onLogin: () => void }) {
+  const [values, setValues] = useState(EMPTY_SIGNUP);
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
 
-  const update = (key: keyof typeof values, value: string) => {
+  const update = (key: keyof SignupValues, value: string) => {
     const next = { ...values, [key]: value };
     setValues(next);
     // Once the user has tried to submit, keep the messages in sync as they type.
@@ -164,85 +167,73 @@ export function AdminSignupForm() {
     const result = await adminSignupRequest(values);
     setPending(false);
     if (result.ok) {
-      setValues({ name: "", email: "", password: "", confirm: "" });
+      setValues(EMPTY_SIGNUP);
+      // The server has already signed the new Admin in (httpOnly session cookie).
       // Shared browsers keep no order list from the previous staff member.
       saveAllOrders([]);
-      window.location.replace("/admin");
+      window.location.replace(result.redirect);
     } else {
       setErrors(result.errors);
     }
   };
 
-  const field = (key: keyof typeof values, label: string, type: string, autoComplete: string, placeholder?: string, hint?: string) => {
+  const field = (key: keyof SignupValues, label: string, type: string, autoComplete: string, placeholder?: string, hint?: string) => {
     const id = `admin-signup-${key}`;
     return (
       <FormField id={id} label={label} error={errors[key]} hint={hint}>
-        <input
-          id={id}
-          type={type}
-          autoComplete={autoComplete}
-          placeholder={placeholder}
-          value={values[key]}
-          onChange={(e) => update(key, e.target.value)}
-          aria-invalid={Boolean(errors[key])}
-          aria-describedby={describedBy(id, errors[key], hint)}
-          className={inputClass}
-        />
+        {type === "password" ? (
+          <PasswordInput
+            id={id}
+            autoComplete={autoComplete}
+            placeholder={placeholder}
+            value={values[key]}
+            onChange={(e) => update(key, e.target.value)}
+            aria-invalid={Boolean(errors[key])}
+            aria-describedby={describedBy(id, errors[key], hint)}
+            className={inputClass}
+          />
+        ) : (
+          <input
+            id={id}
+            type={type}
+            autoComplete={autoComplete}
+            placeholder={placeholder}
+            value={values[key]}
+            onChange={(e) => update(key, e.target.value)}
+            aria-invalid={Boolean(errors[key])}
+            aria-describedby={describedBy(id, errors[key], hint)}
+            className={inputClass}
+          />
+        )}
       </FormField>
     );
   };
 
   return (
-    <AuthFrame
-      title="Create admin account"
-      subtitle="Register with your Gmail address to access the dashboard."
-      footer={
-        <>
-          Already registered?{" "}
-          <Link href="/admin/login" className="font-semibold text-white underline-offset-4 hover:underline">
-            Log in
-          </Link>
-        </>
-      }
-    >
+    <AuthFrame title="Create Admin Account" footer={<SwitchView prompt="Already have an account?" label="Login" onClick={onLogin} />}>
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         <ErrorBanner message={errors.form ?? null} />
-        {field("name", "Full name", "text", "name")}
-        {field("email", "Gmail address", "email", "email", "you@gmail.com")}
+        {field("name", "Full Name", "text", "name")}
+        {field("email", "Email", "email", "email", "you@gmail.com")}
         {field("password", "Password", "password", "new-password", undefined, "At least 8 characters, with a letter and a number")}
-        {field("confirm", "Confirm password", "password", "new-password")}
 
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-full bg-[#ffd400] px-6 py-3 text-sm font-bold text-black transition-all duration-200 hover:brightness-95 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
-        >
-          {pending ? "Creating account…" : "Create admin account"}
+        <button type="submit" disabled={pending} className={submitClass}>
+          {pending ? "Creating account…" : "Create Admin Account"}
         </button>
-        <p className="text-center text-xs text-zinc-500">
-          Passwords are hashed on the server. The password itself is never stored or sent back.
-        </p>
       </form>
     </AuthFrame>
   );
 }
 
-// Shown in place of the signup form once the first admin exists.
-export function AdminSignupClosed() {
+// Shown in the Sign Up view once the first Admin exists, or while the server has signup switched off.
+export function AdminSignupClosed({ reason, onLogin }: { reason: "adminExists" | "notConfigured"; onLogin: () => void }) {
   return (
-    <AuthFrame
-      title="Admin signup closed"
-      subtitle="An admin account already exists on this site."
-      footer={
-        <>
-          Need access? Ask an existing admin to create an account for you.{" "}
-          <Link href="/admin/login" className="font-semibold text-white underline-offset-4 hover:underline">
-            Log in
-          </Link>
-        </>
-      }
-    >
-      <p className="text-center text-sm text-zinc-300">Public admin signup is only open until the first admin account is created.</p>
+    <AuthFrame title="Admin Sign Up Closed" footer={<SwitchView prompt="Already have an account?" label="Login" onClick={onLogin} />}>
+      <p role="status" className="text-center text-sm text-zinc-300">
+        {reason === "adminExists"
+          ? "An Admin account already exists, so public Admin sign-up is closed. Ask the Admin to create an account for you."
+          : "Admin sign-up is not available on this site right now."}
+      </p>
     </AuthFrame>
   );
 }
@@ -250,15 +241,14 @@ export function AdminSignupClosed() {
 const GMAIL_PATTERN = /^[a-z0-9][a-z0-9.]{4,28}[a-z0-9]@gmail\.com$/;
 
 // Client-side checks mirror the server rules; the server remains the source of truth.
-function validateClient(values: { name: string; email: string; password: string; confirm: string }): Errors {
+function validateClient(values: SignupValues): Errors {
   const found: Errors = {};
   const name = isValidName(values.name);
   if (name) found.name = name;
   const email = values.email.trim().toLowerCase();
-  if (!email) found.email = "Please enter your Gmail address.";
+  if (!email) found.email = "Please enter your email.";
   else if (!GMAIL_PATTERN.test(email)) found.email = "Use a valid Gmail address ending in @gmail.com.";
   const password = isValidPassword(values.password);
   if (password) found.password = password;
-  if (!password && values.confirm !== values.password) found.confirm = "Passwords do not match.";
   return found;
 }

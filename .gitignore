@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Local AI-assistant workspace data (never commit)
 /.refact/
+
+# Database backups (real customer data and password hashes)
+/backups/

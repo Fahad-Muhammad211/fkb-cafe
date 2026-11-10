@@ -6,7 +6,7 @@ import type { AuthUser } from "@/types";
 export type AuthErrors = Record<string, string>;
 export type AuthResult = { ok: true; user: AuthUser } | { ok: false; errors: AuthErrors };
 
-const UNREACHABLE: AuthResult = { ok: false, errors: { form: "Could not complete this request in this browser. Reload the page and try again." } };
+const UNREACHABLE: AuthResult = { ok: false, errors: { form: "Could not reach the server. Check your connection and try again." } };
 
 async function send(url: string, method: "POST" | "PATCH", body?: unknown): Promise<AuthResult> {
   try {
@@ -39,8 +39,24 @@ export function signUpRequest(input: { name: string; email: string; phone: strin
   return send("/api/customers", "POST", input);
 }
 
-export function logInRequest(email: string, password: string) {
-  return send("/api/customer/session", "POST", { email, password });
+// Login result for the /login page. An owner's credentials sign in to the owner dashboard instead.
+export type LogInResult = AuthResult | { ok: true; owner: true; redirect: string };
+
+export async function logInRequest(email: string, password: string): Promise<LogInResult> {
+  try {
+    const res = await fetch("/api/customer/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+      credentials: "same-origin",
+    });
+    const data = (await res.json().catch(() => null)) as { user?: AuthUser; owner?: unknown; redirect?: string; error?: string; errors?: AuthErrors } | null;
+    if (res.ok && data?.user) return { ok: true, user: data.user };
+    if (res.ok && data?.owner) return { ok: true, owner: true, redirect: data.redirect ?? "/admin" };
+    return { ok: false, errors: data?.errors ?? { form: data?.error ?? "Something went wrong. Please try again." } };
+  } catch {
+    return UNREACHABLE;
+  }
 }
 
 export async function logOutRequest(): Promise<void> {

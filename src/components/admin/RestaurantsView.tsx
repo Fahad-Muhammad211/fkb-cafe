@@ -3,15 +3,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, MapPin, Plus, Store, UserRound } from "lucide-react";
+import { ArrowRight, MapPin, Plus, Store } from "lucide-react";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
 import { fieldClass, panelClass, primaryClass } from "@/components/admin/EmployeesView";
-import { canAccess, type StaffRole } from "@/lib/permissions";
-import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
-import { useSession } from "@/lib/local/useSession";
+import { canAccess } from "@/lib/permissions";
+import { getAdminSession, type StaffSession } from "@/lib/sessionClient";
+import { useSession } from "@/lib/useSession";
 import { IMAGE_ACCEPT, imageFileToDataUrl } from "@/lib/imageUpload";
 
-// Owner page. Shows every restaurant as a card; each card opens that restaurant's own detail page.
+// Admin page for creating and managing restaurants. Shows every restaurant as a card; each card opens
+// that restaurant's own detail page. Creating a restaurant assigns nobody to it: owners are added to a
+// restaurant from the Employees page.
 
 export interface RestaurantCard {
   id: string;
@@ -21,13 +23,6 @@ export interface RestaurantCard {
   ownerId: string | null;
   ownerName: string | null;
   createdAt: string;
-}
-
-interface OwnerOption {
-  id: string;
-  name: string;
-  role: StaffRole;
-  active: boolean;
 }
 
 export function RestaurantsGate() {
@@ -47,7 +42,6 @@ export function RestaurantsGate() {
 
 export function RestaurantsView() {
   const restaurants = useCustomerData<{ restaurants: RestaurantCard[] }>("/api/admin/restaurants");
-  const employees = useCustomerData<{ staff: OwnerOption[] }>("/api/admin/employees");
   const [adding, setAdding] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
@@ -77,8 +71,6 @@ export function RestaurantsView() {
 
       {adding && (
         <CreateRestaurantForm
-          owners={(employees.data?.staff ?? []).filter((m) => m.active)}
-          takenOwnerIds={list.map((r) => r.ownerId).filter((v): v is string => Boolean(v))}
           onCancel={() => setAdding(false)}
           onCreated={(name) => {
             setAdding(false);
@@ -99,7 +91,7 @@ export function RestaurantsView() {
         <div className={`${panelClass} text-center`}>
           <Store className="mx-auto h-8 w-8 text-zinc-500" aria-hidden="true" />
           <p className="mt-3 font-bold">No restaurants yet</p>
-          <p className="mt-1 text-sm text-zinc-400">Add a restaurant and assign an owner to run it.</p>
+          <p className="mt-1 text-sm text-zinc-400">Add your first restaurant to get started.</p>
         </div>
       )}
 
@@ -114,11 +106,7 @@ export function RestaurantsView() {
                 <RestaurantLogo name={restaurant.name} logo={restaurant.logo} />
                 <div className="min-w-0">
                   <p className="truncate text-lg font-black group-hover:text-orange-400">{restaurant.name}</p>
-                  <p className="mt-2 flex items-center gap-2 text-sm text-zinc-300">
-                    <UserRound className="h-4 w-4 shrink-0 text-orange-500" aria-hidden="true" />
-                    <span className="truncate">{restaurant.ownerName ?? "No owner assigned"}</span>
-                  </p>
-                  <p className="mt-1 flex items-center gap-2 text-sm text-zinc-400">
+                  <p className="mt-2 flex items-center gap-2 text-sm text-zinc-400">
                     <MapPin className="h-4 w-4 shrink-0 text-orange-500" aria-hidden="true" />
                     <span className="truncate">{restaurant.area}</span>
                   </p>
@@ -149,24 +137,12 @@ export function RestaurantLogo({ name, logo, size = "md" }: { name: string; logo
   );
 }
 
-function CreateRestaurantForm({
-  owners,
-  takenOwnerIds,
-  onCancel,
-  onCreated,
-}: {
-  owners: OwnerOption[];
-  takenOwnerIds: string[];
-  onCancel: () => void;
-  onCreated: (name: string) => void;
-}) {
+function CreateRestaurantForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (name: string) => void }) {
   const [name, setName] = useState("");
   const [area, setArea] = useState("");
   const [logo, setLogo] = useState("");
-  const [ownerId, setOwnerId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
-  const available = owners.filter((m) => !takenOwnerIds.includes(m.id));
 
   const handleFile = async (file: File | undefined) => {
     if (!file) return;
@@ -187,12 +163,7 @@ function CreateRestaurantForm({
     if (Object.keys(found).length > 0) return;
 
     setPending(true);
-    const result = await customerRequest<{ restaurant: RestaurantCard }>("/api/admin/restaurants", "POST", {
-      name,
-      area,
-      logo,
-      ownerId: ownerId || null,
-    });
+    const result = await customerRequest<{ restaurant: RestaurantCard }>("/api/admin/restaurants", "POST", { name, area, logo });
     setPending(false);
     if (result.ok) onCreated(result.data.restaurant.name);
     else setErrors(result.errors ?? { form: result.error });
@@ -205,23 +176,6 @@ function CreateRestaurantForm({
       <div className="grid gap-4 md:grid-cols-2">
         <Field id="restaurant-name" label="Restaurant name" value={name} onChange={setName} error={errors.name} />
         <Field id="restaurant-area" label="Area or location" value={area} onChange={setArea} error={errors.area} />
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="restaurant-owner" className="text-sm font-semibold text-zinc-200">
-            Restaurant owner
-          </label>
-          <select id="restaurant-owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} aria-invalid={Boolean(errors.ownerId)} className={fieldClass}>
-            <option value="">{available.length === 0 ? "No owners available" : "No owner yet"}</option>
-            {available.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          {available.length === 0 && (
-            <p className="text-xs text-zinc-500">Every owner already runs a restaurant. Add an owner on the Employees page first.</p>
-          )}
-          {errors.ownerId && <p className="text-xs text-red-300">{errors.ownerId}</p>}
-        </div>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="restaurant-logo" className="text-sm font-semibold text-zinc-200">
             Logo <span className="font-normal text-zinc-500">(optional: image file or https link)</span>

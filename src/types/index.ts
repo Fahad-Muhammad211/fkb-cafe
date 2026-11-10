@@ -43,7 +43,7 @@ export interface MenuItem {
   stock?: "in" | "out";
 }
 
-// Category as saved in localStorage. The icon is stored by name (see ICON_MAP in data/menu).
+// Category as saved in the database. The icon is stored by name (see ICON_MAP in data/menu).
 export interface StoredCategory {
   id: string;
   label: string;

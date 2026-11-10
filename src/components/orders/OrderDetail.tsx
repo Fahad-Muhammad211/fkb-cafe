@@ -1,17 +1,49 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ArrowLeft, MapPin, Phone } from "lucide-react";
-import { cancelOrder, findOrder, ordersStore, parseOrders } from "@/lib/orders";
+import { cancelOrder, findOrder, ordersStore, parseOrders, saveAllOrders } from "@/lib/orders";
 import { formatPKR } from "@/lib/format";
 import { currentStepIndex, isAwaitingConfirmation, isDelivered, statusLabel } from "@/lib/orderStatus";
 import { OrderTimeline } from "@/components/orders/OrderTimeline";
+import type { Order } from "@/types";
+
+const TRACKING_REFRESH_MS = 5000;
+
+// Re-reads this one order from the server every few seconds while the page is visible, so a status
+// change made in the kitchen or by the restaurant shows here without a reload. Guests who are not
+// signed in get 401 and keep the copy they already have.
+function useLiveOrder(id: string) {
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const res = await fetch(`/api/orders/${encodeURIComponent(id)}`, { credentials: "same-origin", cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { order?: Order };
+        if (!active || !data.order) return;
+        const others = parseOrders(ordersStore.getSnapshot()).filter((o) => o.id !== id);
+        saveAllOrders([data.order, ...others].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
+      } catch {
+        // Offline for a moment: the next tick tries again.
+      }
+    };
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, TRACKING_REFRESH_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [id]);
+}
 
 export function OrderDetail({ id }: { id: string }) {
   const raw = useSyncExternalStore(ordersStore.subscribe, ordersStore.getSnapshot, ordersStore.getServerSnapshot);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  useLiveOrder(id);
 
   if (raw === undefined) {
     return <p className="text-sm text-zinc-400">Loading order…</p>;
@@ -44,6 +76,8 @@ export function OrderDetail({ id }: { id: string }) {
   };
   const isDelivery = order.fulfilment === "delivery";
   const items = order.lines.reduce((sum, l) => sum + l.qty, 0);
+  // Given once, when the restaurant confirms the order (see lib/server/pos.ts).
+  const { invoiceNumber, tokenNumber } = order as Order & { invoiceNumber?: string; tokenNumber?: number };
 
   return (
     <div className="flex animate-card-in flex-col gap-6">
@@ -73,6 +107,19 @@ export function OrderDetail({ id }: { id: string }) {
           {statusLabel(order)}
         </p>
       </header>
+
+      {invoiceNumber && (
+        <section aria-label="Invoice and token" className="grid grid-cols-2 gap-3 sm:max-w-md">
+          <div className="rounded-2xl bg-[#ffd400] p-4 text-black">
+            <p className="text-xs font-semibold uppercase">Token number</p>
+            <p className="text-3xl font-black">{tokenNumber}</p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+            <p className="text-xs font-semibold uppercase text-zinc-500">Invoice number</p>
+            <p className="break-all font-bold">{invoiceNumber}</p>
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="progress-heading" className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 md:p-8">
         <h2 id="progress-heading" className="mb-6 text-lg font-bold">
@@ -133,7 +180,9 @@ export function OrderDetail({ id }: { id: string }) {
               <dd>{formatPKR(order.total)}</dd>
             </div>
           </dl>
-          <p className="mt-4 text-xs text-zinc-500">Payment: Cash on Delivery ({order.paymentStatus ?? "pending"})</p>
+          <p className="mt-4 text-xs text-zinc-500">
+            Payment: Cash on Delivery ({order.paymentStatus === "paid" ? "paid" : order.paymentStatus === "cancelled" ? "cancelled" : "unpaid"})
+          </p>
         </section>
 
         <section aria-labelledby="details-heading" className="h-fit rounded-2xl border border-zinc-800 bg-zinc-900 p-5">

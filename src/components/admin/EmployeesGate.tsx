@@ -4,8 +4,8 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { EmployeesView } from "@/components/admin/EmployeesView";
 import { canAccess } from "@/lib/permissions";
-import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
-import { useSession } from "@/lib/local/useSession";
+import { getAdminSession, type StaffSession } from "@/lib/sessionClient";
+import { useSession } from "@/lib/useSession";
 
 // Owner page. Signed-out visitors go to the admin login.
 export function EmployeesGate() {

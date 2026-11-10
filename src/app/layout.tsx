@@ -8,7 +8,6 @@ import { CartDrawer } from "@/components/cart/CartDrawer";
 import { CartBar } from "@/components/cart/CartBar";
 import { LocationModal } from "@/components/layout/LocationModal";
 import { DataSync } from "@/components/layout/DataSync";
-import { LocalBackend } from "@/components/layout/LocalBackend";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -37,7 +36,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${poppins.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col bg-zinc-950 text-white">
-        <LocalBackend />
         <AuthProvider>
           <Suspense fallback={null}>
             <DataSync />

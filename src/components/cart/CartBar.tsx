@@ -15,7 +15,7 @@ export function CartBar() {
   // waits until hydration is done to avoid a server/client mismatch when the cart has items.
   const hydrated = useHydrated();
 
-  if (!hydrated || count === 0 || isOpen || pathname === "/checkout" || pathname.startsWith("/admin")) return null;
+  if (!hydrated || count === 0 || isOpen || pathname === "/checkout" || pathname.startsWith("/admin") || pathname.startsWith("/owner") || pathname.startsWith("/kitchen")) return null;
 
   return (
     <button

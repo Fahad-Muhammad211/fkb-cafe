@@ -5,6 +5,7 @@ import { KeyRound, Save, UserRound } from "lucide-react";
 import { Card, LoadingBlock, Notice, PageHeader, inputStyles, primaryButton } from "@/components/customer/ui";
 import { customerRequest } from "@/components/customer/useCustomerData";
 import { FormField, describedBy } from "@/components/ui/FormField";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { useAuth } from "@/context/AuthContext";
 import { isValidName, isValidPassword, isValidPhone } from "@/lib/validation";
 import type { AuthUser } from "@/types";
@@ -152,9 +153,8 @@ function PasswordForm() {
 
   const field = (key: keyof typeof values, label: string, autoComplete: string, hint?: string) => (
     <FormField id={`password-${key}`} label={label} error={errors[key]} hint={hint}>
-      <input
+      <PasswordInput
         id={`password-${key}`}
-        type="password"
         autoComplete={autoComplete}
         value={values[key]}
         onChange={(e) => update(key, e.target.value)}

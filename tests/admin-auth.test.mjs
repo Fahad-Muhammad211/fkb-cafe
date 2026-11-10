@@ -1,117 +1,58 @@
-// Admin and customer auth tests. They run against a real `next start` server and a real MongoDB
-// database, using a throwaway database named meg_test_<random>. That database is dropped at the end.
-// The real database (MONGODB_DB) is only read, to check that its admin and customer counts did not change.
+// Admin and customer auth tests, against `next start` and a throwaway in-memory MongoDB (see
+// tests/harness.mjs). They never connect to the database in .env.local.
 //
-// Run: npm run build, then npm test. Needs MONGODB_URI in .env.local.
+// This file was first written for the original version of the app, which used the real database with a
+// temporary meg_test_<random> database. It now uses the shared harness, and the expectations follow the
+// current design: first-Admin setup needs ADMIN_SETUP_KEY, passwords are PBKDF2 hashes, the Admin adds
+// Owners (each tied to a restaurant), and pages are guarded in the browser while every API checks the
+// session on the server.
+//
+// Run: npm run build, then npm test.
 
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { MongoClient } from "mongodb";
+import { TEST_PASSWORD, TEST_SETUP_KEY, cookieFrom, json, randomCustomerEmail, randomGmail, startTestEnvironment } from "./harness.mjs";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
-const PORT = 3300 + Math.floor(Math.random() * 500);
-const BASE = `http://localhost:${PORT}`;
-const TEST_DB = `meg_test_${randomBytes(4).toString("hex")}`;
-const REAL_DB = process.env.MONGODB_DB || "meg";
-const PASSWORD = "TestPass123";
+const PASSWORD = TEST_PASSWORD;
 
-const randomGmail = () => `megtest${randomBytes(3).toString("hex")}@gmail.com`;
-const randomCustomerEmail = () => `customer.${randomBytes(4).toString("hex")}@example.com`;
+let env;
+let base;
 
-let server;
-let client;
-let realClient;
-let realCountsBefore;
+before(async () => {
+  env = await startTestEnvironment();
+  base = env.base;
+});
 
-// Pulls one cookie value out of a response's Set-Cookie headers, returned as "name=value".
-function cookieFrom(res, name) {
-  const found = res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`));
-  return found ? found.split(";")[0] : null;
-}
+after(async () => {
+  await env?.stop();
+});
 
 const postJson = (urlPath, body, cookie) =>
-  fetch(BASE + urlPath, {
+  fetch(base + urlPath, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(cookie ? { cookie } : {}) },
     body: JSON.stringify(body),
     redirect: "manual",
   });
 
-const get = (urlPath, cookie) => fetch(BASE + urlPath, { headers: cookie ? { cookie } : {}, redirect: "manual" });
+const get = (urlPath, cookie) => fetch(base + urlPath, { headers: cookie ? { cookie } : {}, redirect: "manual" });
 
-const testDb = () => client.db(TEST_DB);
-
-async function countRealCollections() {
-  const db = realClient.db(REAL_DB);
-  return { admins: await db.collection("admins").countDocuments(), customers: await db.collection("customers").countDocuments() };
-}
-
-async function waitForServer() {
-  for (let i = 0; i < 90; i += 1) {
-    try {
-      const res = await fetch(`${BASE}/api/catalog`);
-      if (res.ok) return;
-    } catch {
-      // Not listening yet.
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`next start did not answer on ${BASE} within 90 seconds`);
-}
-
-before(async () => {
-  if (!process.env.MONGODB_URI) throw new Error("MONGODB_URI is not set. Run the tests with --env-file=.env.local (npm test does this).");
-  if (!TEST_DB.startsWith("meg_test_") || TEST_DB === REAL_DB) throw new Error("Refusing to run: the test database name is not isolated.");
-  if (!existsSync(path.join(ROOT, ".next", "BUILD_ID"))) throw new Error("No production build found. Run npm run build first.");
-
-  realClient = new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
-  await realClient.connect();
-  realCountsBefore = await countRealCollections();
-
-  client = new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
-  await client.connect();
-
-  server = spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(PORT)], {
-    cwd: ROOT,
-    env: { ...process.env, MONGODB_DB: TEST_DB, NEXT_TELEMETRY_DISABLED: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  server.stderr.on("data", () => {});
-  await waitForServer();
-});
-
-after(async () => {
-  if (server?.pid) {
-    if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-    else server.kill("SIGTERM");
-  }
-  if (client) {
-    if (TEST_DB.startsWith("meg_test_") && TEST_DB !== REAL_DB) await testDb().dropDatabase();
-    await client.close();
-  }
-  if (realClient) {
-    const countsAfter = realCountsBefore ? await countRealCollections() : null;
-    await realClient.close();
-    if (realCountsBefore) assert.deepEqual(countsAfter, realCountsBefore, "the real database must not change during the tests");
-  }
-});
+const admins = () => env.db.collection("admins");
 
 describe("initial admin setup", () => {
-  test("the signup page shows the form before any admin exists", async () => {
-    const res = await get("/admin/signup");
-    assert.equal(res.status, 200);
-    assert.match(await res.text(), /admin-signup-email/);
+  test("setup is open before any admin exists", async () => {
+    // The pages render in the browser, so the open/closed state is read from the setup API.
+    const status = await json("GET", `${base}/api/admin/setup`);
+    assert.deepEqual(status.data, { adminExists: false, open: true, keyConfigured: true });
+    assert.equal((await get("/admin/signup")).status, 200);
+    assert.equal((await get("/admin/login")).status, 200);
   });
 
   let winnerCookie;
 
   test("concurrent setup requests create exactly one initial admin", async () => {
     const attempts = Array.from({ length: 8 }, () =>
-      postJson("/api/admin/accounts", { name: "Setup Admin", email: randomGmail(), password: PASSWORD, confirm: PASSWORD }),
+      postJson("/api/admin/accounts", { setupKey: TEST_SETUP_KEY, name: "Setup Admin", email: randomGmail(), password: PASSWORD, confirm: PASSWORD }),
     );
     const results = await Promise.all(attempts);
     const statuses = results.map((r) => r.status).sort();
@@ -122,44 +63,38 @@ describe("initial admin setup", () => {
     winnerCookie = cookieFrom(winner, "meg_admin_session");
     assert.ok(winnerCookie, "the initial admin must be signed in");
 
-    const admins = await testDb().collection("admins").find({}).toArray();
-    assert.equal(admins.length, 1, "exactly one admin document in the test database");
-    assert.equal(admins[0]._id, "admin-initial");
+    const docs = await admins().find({}).toArray();
+    assert.equal(docs.length, 1, "exactly one admin document in the test database");
+    assert.equal(docs[0]._id, "admin-initial");
+    assert.equal(docs[0].role, "admin");
   });
 
   test("setup stays closed after the initial admin exists", async () => {
-    const res = await postJson("/api/admin/accounts", { name: "Late Admin", email: randomGmail(), password: PASSWORD, confirm: PASSWORD });
+    const res = await postJson("/api/admin/accounts", { setupKey: TEST_SETUP_KEY, name: "Late Admin", email: randomGmail(), password: PASSWORD, confirm: PASSWORD });
     assert.equal(res.status, 403);
-    assert.equal(await testDb().collection("admins").countDocuments(), 1);
+    assert.equal(await admins().countDocuments(), 1);
   });
 
-  test("the signup page is closed and the login page no longer links to it", async () => {
-    const signup = await get("/admin/signup");
-    assert.equal(signup.status, 200);
-    const signupHtml = await signup.text();
-    assert.match(signupHtml, /Admin signup closed/);
-    assert.doesNotMatch(signupHtml, /admin-signup-email/);
-
-    const login = await get("/admin/login");
-    assert.equal(login.status, 200);
-    assert.doesNotMatch(await login.text(), /Create one/);
+  test("the setup API reports setup as closed", async () => {
+    const status = await json("GET", `${base}/api/admin/setup`);
+    assert.deepEqual(status.data, { adminExists: true, open: false, keyConfigured: true });
   });
 
   describe("unauthorized admin creation", () => {
     test("no session cannot create an admin", async () => {
-      const res = await postJson("/api/admin/accounts", { name: "Intruder", email: randomGmail(), password: PASSWORD, confirm: PASSWORD });
+      const res = await postJson("/api/admin/accounts", { setupKey: TEST_SETUP_KEY, name: "Intruder", email: randomGmail(), password: PASSWORD, confirm: PASSWORD });
       assert.equal(res.status, 403);
-      assert.equal(await testDb().collection("admins").countDocuments(), 1);
+      assert.equal(await admins().countDocuments(), 1);
     });
 
     test("a forged or malformed admin cookie cannot create an admin", async () => {
       const res = await postJson(
         "/api/admin/accounts",
-        { name: "Intruder", email: randomGmail(), password: PASSWORD, confirm: PASSWORD },
+        { setupKey: TEST_SETUP_KEY, name: "Intruder", email: randomGmail(), password: PASSWORD, confirm: PASSWORD },
         "meg_admin_session=eyJzdWIiOiJhZG1pbi1pbml0aWFsIn0.forgedsignature",
       );
       assert.equal(res.status, 403);
-      assert.equal(await testDb().collection("admins").countDocuments(), 1);
+      assert.equal(await admins().countDocuments(), 1);
     });
 
     test("a customer session cannot create an admin", async () => {
@@ -176,7 +111,7 @@ describe("initial admin setup", () => {
 
       const res = await postJson("/api/admin/accounts", { name: "Sneaky", email: randomGmail(), password: PASSWORD, confirm: PASSWORD }, customerCookie);
       assert.equal(res.status, 403);
-      assert.equal(await testDb().collection("admins").countDocuments(), 1);
+      assert.equal(await admins().countDocuments(), 1);
     });
 
     test("admin-only APIs reject a customer session", async () => {
@@ -193,47 +128,63 @@ describe("initial admin setup", () => {
     });
   });
 
-  describe("authorized admin creation", () => {
-    let newAdminEmail;
+  // The Admin adds further accounts as Owners, each tied to a restaurant created on the Restaurants page.
+  describe("authorized account creation", () => {
+    let newOwnerEmail;
+    let restaurantId;
 
-    test("a signed-in admin can create another admin without changing their own session", async () => {
-      newAdminEmail = randomGmail();
-      const res = await postJson("/api/admin/accounts", { name: "Second Admin", email: newAdminEmail, password: PASSWORD, confirm: PASSWORD, responsibilities: ["orders"] }, winnerCookie);
+    test("the signed-in admin can create an owner without changing their own session", async () => {
+      const restaurant = await json("POST", `${base}/api/admin/restaurants`, { cookie: winnerCookie, body: { name: "Auth Test Kitchen", area: "Gulberg" } });
+      assert.equal(restaurant.status, 201, restaurant.text);
+      restaurantId = restaurant.data.restaurant.id;
+
+      newOwnerEmail = randomGmail();
+      const res = await postJson("/api/admin/accounts", { name: "Second Account", email: newOwnerEmail, password: PASSWORD, confirm: PASSWORD, restaurantId }, winnerCookie);
       assert.equal(res.status, 201);
       const body = await res.json();
-      assert.equal(body.account.email, newAdminEmail);
+      assert.equal(body.account.email, newOwnerEmail);
+      assert.equal(body.account.role, "owner");
       assert.equal(cookieFrom(res, "meg_admin_session"), null, "the caller's session must not be replaced");
 
-      const admins = await testDb().collection("admins").find({}).toArray();
-      assert.equal(admins.length, 2);
-      const created = admins.find((a) => a.email === newAdminEmail);
-      assert.ok(created, "the new admin is saved in the database");
+      const docs = await admins().find({}).toArray();
+      assert.equal(docs.length, 2);
+      const created = docs.find((a) => a.email === newOwnerEmail);
+      assert.ok(created, "the new account is saved in the database");
       assert.notEqual(created._id, "admin-initial");
-      assert.ok(created.passwordHash.startsWith("scrypt$"), "the password is stored as a scrypt hash");
+      assert.equal(created.role, "owner");
+      assert.equal(created.restaurantId, restaurantId);
+      assert.ok(created.passwordHash.startsWith("pbkdf2$"), "the password is stored as a PBKDF2 hash");
       assert.ok(!created.passwordHash.includes(PASSWORD));
     });
 
-    test("the creator's dashboard is still reachable after creating an admin", async () => {
-      const res = await get("/admin", winnerCookie);
-      assert.equal(res.status, 200);
+    test("the creator's admin access still works after creating an account", async () => {
+      assert.equal((await get("/admin", winnerCookie)).status, 200);
+      const session = await json("GET", `${base}/api/admin/session`, { cookie: winnerCookie });
+      assert.equal(session.data.session.role, "admin");
+      assert.equal((await get("/api/admin/employees", winnerCookie)).status, 200);
     });
 
     test("a duplicate Gmail address is rejected", async () => {
-      const res = await postJson("/api/admin/accounts", { name: "Dup", email: newAdminEmail, password: PASSWORD, confirm: PASSWORD, responsibilities: ["orders"] }, winnerCookie);
+      const res = await postJson("/api/admin/accounts", { name: "Dup", email: newOwnerEmail, password: PASSWORD, confirm: PASSWORD, restaurantId }, winnerCookie);
       assert.equal(res.status, 400);
       assert.ok((await res.json()).errors.email);
     });
 
-    test("the new admin can log in with their own credentials", async () => {
-      const res = await postJson("/api/admin/session", { email: newAdminEmail, password: PASSWORD });
+    test("the new owner can log in with their own credentials and is sent to /owner", async () => {
+      const res = await postJson("/api/admin/session", { email: newOwnerEmail, password: PASSWORD });
       assert.equal(res.status, 200);
-      assert.ok(cookieFrom(res, "meg_admin_session"));
+      assert.equal((await res.json()).redirect, "/owner");
+      const ownerCookie = cookieFrom(res, "meg_admin_session");
+      assert.ok(ownerCookie);
+      assert.equal((await get("/api/admin/employees", ownerCookie)).status, 403, "an Owner has no Admin access");
     });
 
-    test("the dashboard redirects signed-out visitors to login", async () => {
-      const res = await get("/admin");
-      assert.equal(res.status, 307);
-      assert.match(res.headers.get("location"), /\/admin\/login$/);
+    test("signed-out visitors get no admin data", async () => {
+      // The /admin page itself redirects in the browser (covered by the browser tests); the data is
+      // protected on the server.
+      assert.equal((await json("GET", `${base}/api/admin/session`)).data.session, null);
+      assert.equal((await get("/api/admin/employees")).status, 401);
+      assert.equal((await get("/api/admin/orders")).status, 401);
     });
   });
 });
@@ -247,9 +198,9 @@ describe("customer flows are unchanged", () => {
     assert.equal(res.status, 201);
     customerCookie = cookieFrom(res, "meg_customer_session");
     assert.ok(customerCookie);
-    const saved = await testDb().collection("customers").findOne({ email });
+    const saved = await env.db.collection("customers").findOne({ email });
     assert.ok(saved, "the customer is saved in the database");
-    assert.ok(saved.passwordHash.startsWith("scrypt$"));
+    assert.ok(saved.passwordHash.startsWith("pbkdf2$"));
   });
 
   test("customer login with the right password succeeds", async () => {

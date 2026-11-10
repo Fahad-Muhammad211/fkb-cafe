@@ -1,18 +1,16 @@
-// Browser tests for the LocalStorage build. They start `next start` on a free port and drive the app
-// with Chrome. Every account and record is written to this browser's localStorage, so each test uses
-// a fresh browser context and nothing is sent to a database.
+// Browser tests for the whole app. They start `next start` against a throwaway in-memory MongoDB (see
+// tests/harness.mjs) and drive the app with Chrome. Every account and record is stored on the server;
+// the database is emptied before each test, so each one starts from a fresh install.
 //
 // Run: npm run build, then npm test. Set CHROME_PATH if Chrome is not in its default Windows or
 // Linux location.
 
-import { test, before, after } from "node:test";
+import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import path from "node:path";
 import { chromium } from "playwright-core";
+import { TEST_SETUP_KEY, startTestEnvironment } from "./harness.mjs";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
   "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -25,61 +23,46 @@ const PAGES = ["/", "/login", "/signup", "/checkout", "/faq", "/privacy", "/admi
 // Admin and account pages send signed-out visitors to a login page. They must still render without errors.
 const GUARDED = ["/account", "/account/orders", "/account/addresses", "/account/wishlist", "/account/payments", "/account/support", "/admin", "/admin/orders", "/admin/products", "/admin/customers", "/admin/analytics", "/admin/employees", "/admin/restaurants", "/admin/restaurants/rest-unknown"];
 
-let server;
+let env;
 let base;
 let browser;
 
-function freePort() {
-  return 3900 + Math.floor(Math.random() * 500);
-}
-
-async function waitForServer(url, timeoutMs = 60000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const res = await fetch(url, { redirect: "manual" });
-      if (res.status < 600) return;
-    } catch {
-      // Not listening yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  throw new Error(`Server did not start at ${url}`);
-}
-
 before(async () => {
-  if (!existsSync(path.join(ROOT, ".next", "BUILD_ID"))) throw new Error("No production build found. Run npm run build first.");
   const chromePath = CHROME_CANDIDATES.find((p) => existsSync(p));
   if (!chromePath) throw new Error("Chrome was not found. Set CHROME_PATH to the Chrome executable.");
-
-  const port = freePort();
-  base = `http://localhost:${port}`;
-  server = spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)], {
-    cwd: ROOT,
-    env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  server.stderr.on("data", () => {});
-  await waitForServer(base);
+  env = await startTestEnvironment();
+  base = env.base;
   browser = await chromium.launch({ executablePath: chromePath, headless: true });
 });
 
 after(async () => {
   if (browser) await browser.close();
-  if (server?.pid) {
-    if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(server.pid), "/T", "/F"], { stdio: "ignore" });
-    else server.kill("SIGTERM");
-  }
+  if (env) await env.stop();
 });
 
-// Opens a page in a fresh context and records uncaught errors and console errors.
+beforeEach(async () => {
+  await env.reset();
+});
+
+// The records in one collection, read straight from the test database.
+const stored = (name, filter = {}) => env.db.collection(name).find(filter).toArray();
+// Chrome logs every 4xx/5xx response as a console error ("Failed to load resource"). The tests send
+// refused requests on purpose (wrong password, invalid form, an Owner calling an Admin API) and assert
+// those status codes directly, so these lines are not counted as page errors. Server errors (5xx) are
+// still caught by the response listener in openPage.
+const isHttpStatusLog = (msg) => msg.text().startsWith("Failed to load resource: the server responded with a status of");
+
+// Opens a page in a fresh context and records uncaught errors, console errors and server errors.
 async function openPage() {
   const context = await browser.newContext();
   const page = await context.newPage();
   const problems = [];
   page.on("pageerror", (err) => problems.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
-    if (msg.type() === "error") problems.push(`console: ${msg.text()}`);
+    if (msg.type() === "error" && !isHttpStatusLog(msg)) problems.push(`console: ${msg.text()}`);
+  });
+  page.on("response", (res) => {
+    if (res.status() >= 500) problems.push(`server error: ${res.status()} ${res.request().method()} ${new URL(res.url()).pathname}`);
   });
   return { context, page, problems };
 }
@@ -116,7 +99,7 @@ test("signed-out visitors to guarded pages are sent to a login page", async () =
   }
 });
 
-test("first admin account is created in localStorage and opens the dashboard", async () => {
+test("first admin account is created in MongoDB with the setup key and opens the dashboard", async () => {
   const { context, page, problems } = await openPage();
   try {
     await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
@@ -124,14 +107,22 @@ test("first admin account is created in localStorage and opens the dashboard", a
     await page.locator("#admin-signup-name").fill("Test Owner");
     await page.locator("#admin-signup-email").fill("owner.test1@gmail.com");
     await page.locator("#admin-signup-password").fill("Passw0rd!");
-    await page.locator("#admin-signup-confirm").fill("Passw0rd!");
     await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     await settle(page);
 
-    const stored = await page.evaluate(() => window.localStorage.getItem("meg-local:admins"));
-    assert.ok(stored && stored.includes("owner.test1@gmail.com"), "admin account was not saved to localStorage");
-    assert.ok(!stored.includes("Passw0rd!"), "plain-text password was saved");
+    const admins = await stored("admins");
+    assert.equal(admins.length, 1);
+    assert.equal(admins[0].email, "owner.test1@gmail.com");
+    assert.match(admins[0].passwordHash, /^pbkdf2\$/);
+    assert.ok(!JSON.stringify(admins).includes("Passw0rd!"), "plain-text password was saved");
+    // The session is an httpOnly cookie backed by MongoDB; the browser's storage holds no account data.
+    const cookies = await context.cookies();
+    const sessionCookie = cookies.find((c) => c.name === "meg_admin_session");
+    assert.ok(sessionCookie?.httpOnly, "admin session cookie is not httpOnly");
+    assert.equal((await stored("sessions", { kind: "admin" })).length, 1);
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.localStorage).filter((k) => !/^meg-(cart|location)-v1$/.test(k))), []);
+    assert.equal(await page.evaluate(() => window.sessionStorage.length), 0);
     assert.deepEqual(problems, []);
   } finally {
     await context.close();
@@ -155,8 +146,11 @@ test("customer account is created, kept after reload, and shown on the account p
     await page.reload({ waitUntil: "load" });
     await settle(page);
     assert.match(page.url(), /\/account/, "customer was signed out after reload");
-    const stored = await page.evaluate(() => window.localStorage.getItem("meg-local:customers"));
-    assert.ok(stored && stored.includes("customer.test1@gmail.com"), "customer was not saved to localStorage");
+    const customers = await stored("customers");
+    assert.ok(customers.some((c) => c.email === "customer.test1@gmail.com"), "customer was not saved to MongoDB");
+    const cookies = await context.cookies();
+    assert.ok(cookies.find((c) => c.name === "meg_customer_session")?.httpOnly, "customer session cookie is not httpOnly");
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.localStorage).filter((k) => !/^meg-(cart|location)-v1$/.test(k))), []);
     assert.deepEqual(problems, []);
   } finally {
     await context.close();
@@ -225,7 +219,6 @@ test("owner adds other owners to restaurants, manages a team, and every owner ca
     await page.locator("#admin-signup-name").fill("Test Owner");
     await page.locator("#admin-signup-email").fill("owner.test2@gmail.com");
     await page.locator("#admin-signup-password").fill("Passw0rd!");
-    await page.locator("#admin-signup-confirm").fill("Passw0rd!");
     await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     await settle(page);
@@ -290,7 +283,7 @@ test("owner adds other owners to restaurants, manages a team, and every owner ca
     await page.getByText("Staff under this owner (0)").waitFor();
 
     // Saved with the account, and linked: Main Branch had no owner, so Asad now runs it.
-    const storedAsad = await page.evaluate((id) => JSON.parse(localStorage.getItem("meg-local:admins")).find((d) => d._id === id), asadId);
+    const [storedAsad] = await stored("admins", { _id: asadId });
     assert.equal(storedAsad.restaurantId, mainId);
     const mainAfter = (await api("GET", "/api/admin/restaurants")).data.restaurants.find((r) => r.id === mainId);
     assert.equal(mainAfter.ownerName, "Asad Owner");
@@ -357,14 +350,14 @@ test("owner adds other owners to restaurants, manages a team, and every owner ca
     await team().getByText("Ali Cashier", { exact: true }).waitFor({ timeout: 15000 });
     await page.getByText("Staff moved in", { exact: true }).waitFor();
 
-    // Sign in as Asad (same browser): as an owner, Asad can open every team and the owner-wide pages.
+    // Sign in as Asad (same browser): an Owner is sent to the Owner dashboard and every Admin API refuses them.
     await page.evaluate(() => fetch("/api/admin/session", { method: "DELETE", credentials: "same-origin" }));
     await page.goto(`${base}/admin/login`, { waitUntil: "load" });
     await settle(page);
     await page.locator("#admin-login-email").fill("owner.test2b@gmail.com");
     await page.locator("#admin-login-password").fill("Passw0rd!");
     await page.locator('button[type="submit"]').first().click();
-    await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
+    await page.waitForURL(/\/owner/, { timeout: 20000 });
     const access = await page.evaluate(
       async ({ own, other }) => {
         const status = async (url) => (await fetch(url, { credentials: "same-origin" })).status;
@@ -378,7 +371,7 @@ test("owner adds other owners to restaurants, manages a team, and every owner ca
       },
       { own: asadId, other: bilalId },
     );
-    assert.deepEqual(access, { own: 200, other: 200, employees: 200, restaurants: 200, oldRoute: 404 });
+    assert.deepEqual(access, { own: 403, other: 403, employees: 403, restaurants: 403, oldRoute: 404 });
     assert.deepEqual(problems, []);
   } finally {
     await context.close();
@@ -392,7 +385,10 @@ test("owner manages restaurants: cards, separate detail data, records and live r
   page.on("pageerror", (err) => problems.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
     // The OpenStreetMap embed is a third-party frame; its own console output is not the app's.
-    if (msg.type() === "error" && !msg.location().url.includes("openstreetmap")) problems.push(`console: ${msg.text()}`);
+    if (msg.type() === "error" && !msg.location().url.includes("openstreetmap") && !isHttpStatusLog(msg)) problems.push(`console: ${msg.text()}`);
+  });
+  page.on("response", (res) => {
+    if (res.status() >= 500) problems.push(`server error: ${res.status()} ${res.request().method()} ${new URL(res.url()).pathname}`);
   });
   const api = (method, url, body) =>
     page.evaluate(
@@ -414,7 +410,6 @@ test("owner manages restaurants: cards, separate detail data, records and live r
     await page.locator("#admin-signup-name").fill("Test Owner");
     await page.locator("#admin-signup-email").fill("owner.rest@gmail.com");
     await page.locator("#admin-signup-password").fill("Passw0rd!");
-    await page.locator("#admin-signup-confirm").fill("Passw0rd!");
     await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     await settle(page);
@@ -427,9 +422,10 @@ test("owner manages restaurants: cards, separate detail data, records and live r
     await settle(page);
     await page.getByText("No restaurants yet").waitFor({ timeout: 15000 });
 
-    // Restaurant B through the API, with no owner yet.
-    const restB = await api("POST", "/api/admin/restaurants", { name: "DHA Diner", area: "DHA Phase 5", logo: "", ownerId: null });
+    // Restaurant B through the API. Creating a restaurant never assigns anyone: an ownerId sent anyway is ignored.
+    const restB = await api("POST", "/api/admin/restaurants", { name: "DHA Diner", area: "DHA Phase 5", logo: "", ownerId: "admin-initial" });
     assert.equal(restB.status, 201);
+    assert.equal(restB.data.restaurant.ownerId, null, "restaurant creation must not assign an owner");
     const restBId = restB.data.restaurant.id;
 
     // Two more owners, added for restaurant B, each with one staff member. The first one added to a
@@ -448,23 +444,25 @@ test("owner manages restaurants: cards, separate detail data, records and live r
     assert.equal((await api("POST", `/api/admin/owners/${ownerB}/staff`, { name: "Zara Cashier" })).status, 201);
     assert.equal((await api("GET", `/api/admin/restaurants/${restBId}`)).data.restaurant.ownerId, ownerB);
 
-    // Create restaurant A from the form, run by Ayesha. She now belongs to restaurant A.
+    // Create restaurant A from the form. The form has no owner field, and the new restaurant has no owner.
     await page.reload({ waitUntil: "load" });
     await settle(page);
     await page.getByRole("button", { name: "Add restaurant" }).click();
     await page.locator("#restaurant-name").fill("Gulberg Grill");
+    assert.equal(await page.locator("#restaurant-owner").count(), 0, "the form must not have an owner field");
+    assert.equal(await page.getByText("Restaurant owner").count(), 0);
     await page.locator("#restaurant-area").fill("Gulberg, Lahore");
-    await page.locator("#restaurant-owner").selectOption({ label: "Ayesha Owner" });
     await page.getByRole("button", { name: "Add restaurant" }).click();
     await page.getByText("Gulberg Grill was added.").waitFor({ timeout: 15000 });
+    const created = (await api("GET", "/api/admin/restaurants")).data.restaurants.find((r) => r.name === "Gulberg Grill");
+    assert.equal(created.ownerId, null, "restaurant creation must not assign an owner");
+
+    // Owners are assigned on the Employees side: moving Ayesha to restaurant A makes her run it.
+    assert.equal((await api("PATCH", `/api/admin/employees/${ownerA}`, { restaurantId: created.id })).status, 200);
+    assert.equal((await api("GET", `/api/admin/restaurants/${created.id}`)).data.restaurant.ownerId, ownerA);
     const owners = (await api("GET", "/api/admin/employees")).data.staff;
     assert.equal(owners.find((m) => m.id === ownerA).restaurantName, "Gulberg Grill");
     assert.equal(owners.find((m) => m.id === ownerB).restaurantName, "DHA Diner");
-
-    // An owner cannot run two restaurants.
-    const dup = await api("POST", "/api/admin/restaurants", { name: "Other", area: "Johar Town", logo: "", ownerId: ownerA });
-    assert.equal(dup.status, 400);
-    assert.match(dup.data.errors.ownerId, /already runs/);
 
     await page.reload({ waitUntil: "load" });
     await settle(page);
@@ -472,8 +470,9 @@ test("owner manages restaurants: cards, separate detail data, records and live r
     await cards.first().waitFor({ timeout: 15000 });
     assert.equal(await cards.count(), 2);
     const cardA = cards.filter({ hasText: "Gulberg Grill" });
-    await cardA.getByText("Ayesha Owner").waitFor();
     await cardA.getByText("Gulberg, Lahore").waitFor();
+    // The cards show the restaurant only; owners are not shown on this page.
+    assert.equal(await cardA.getByText("Ayesha Owner").count(), 0);
 
     const list = await api("GET", "/api/admin/restaurants");
     const restA = list.data.restaurants.find((r) => r.name === "Gulberg Grill");
@@ -582,22 +581,22 @@ test("owner manages restaurants: cards, separate detail data, records and live r
     await page.goto(`${base}/admin/restaurants/rest-missing`, { waitUntil: "load" });
     await page.getByText("Restaurant not found.").waitFor({ timeout: 15000 });
 
-    // Every owner can open the restaurant pages and data.
+    // An Owner cannot open the Admin restaurant pages or data; they are sent to the Owner dashboard.
     await api("DELETE", "/api/admin/session");
     await page.goto(`${base}/admin/login`, { waitUntil: "load" });
     await settle(page);
     await page.locator("#admin-login-email").fill("owner.resta@gmail.com");
     await page.locator("#admin-login-password").fill("Passw0rd!");
     await page.locator('button[type="submit"]').first().click();
-    await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
-    assert.equal((await api("GET", `/api/admin/restaurants/${restA.id}`)).status, 200);
+    await page.waitForURL(/\/owner/, { timeout: 20000 });
+    assert.equal((await api("GET", `/api/admin/restaurants/${restA.id}`)).status, 403);
     assert.deepEqual(problems, []);
   } finally {
     await context.close();
   }
 });
 
-test("accounts saved with the old manager role are migrated to owner and keep their data", async () => {
+test("accounts saved with the old manager role are read as owners and keep their data", async () => {
   const { context, page, problems } = await openPage();
   const api = (method, url, body) =>
     page.evaluate(
@@ -618,7 +617,6 @@ test("accounts saved with the old manager role are migrated to owner and keep th
     await page.locator("#admin-signup-name").fill("Test Owner");
     await page.locator("#admin-signup-email").fill("owner.migrate@gmail.com");
     await page.locator("#admin-signup-password").fill("Passw0rd!");
-    await page.locator("#admin-signup-confirm").fill("Passw0rd!");
     await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     await settle(page);
@@ -631,43 +629,107 @@ test("accounts saved with the old manager role are migrated to owner and keep th
     assert.equal(created.status, 201);
     const legacyId = created.data.account.id;
     assert.equal((await api("POST", `/api/admin/owners/${legacyId}/staff`, { name: "Kept Staff" })).status, 201);
-    await page.evaluate((id) => {
-      const docs = JSON.parse(localStorage.getItem("meg-local:admins"));
-      const doc = docs.find((d) => d._id === id);
-      doc.role = "manager";
-      doc.responsibilities = ["orders"];
-      delete doc.restaurantId;
-      doc.officeId = "office-legacy";
-      doc.officeName = "Legacy Office";
-      localStorage.setItem("meg-local:admins", JSON.stringify(docs));
-    }, legacyId);
+    await env.db.collection("admins").updateOne(
+      { _id: legacyId },
+      { $set: { role: "manager", responsibilities: ["orders"], officeId: "office-legacy", officeName: "Legacy Office" }, $unset: { restaurantId: "" } },
+    );
 
-    // Loading the app migrates the stored role. Name, email, password, old office fields and team are kept.
+    // The stored record keeps its name, email, password, old office fields and team; it is read as an owner.
     await page.reload({ waitUntil: "load" });
     await settle(page);
-    const stored = await page.evaluate((id) => JSON.parse(localStorage.getItem("meg-local:admins")).find((d) => d._id === id), legacyId);
-    assert.equal(stored.role, "owner");
-    assert.equal(stored.name, "Legacy Person");
-    assert.equal(stored.email, "legacy.person@gmail.com");
-    assert.equal(stored.officeName, "Legacy Office");
+    const [legacyDoc] = await stored("admins", { _id: legacyId });
+    assert.equal(legacyDoc.name, "Legacy Person");
+    assert.equal(legacyDoc.email, "legacy.person@gmail.com");
+    assert.equal(legacyDoc.officeName, "Legacy Office");
+    assert.equal((await api("GET", "/api/admin/employees")).data.staff.find((m) => m.id === legacyId).role, "owner");
     // The owner is shown with the restaurant they run.
     const legacyOwner = (await api("GET", "/api/admin/employees")).data.staff.find((m) => m.id === legacyId);
     assert.equal(legacyOwner.restaurantName, "Legacy Kitchen");
-    // The first owner never chose a restaurant.
-    assert.equal((await api("GET", "/api/admin/employees")).data.staff.find((m) => m.id === "admin-initial").restaurantId, null);
+    // The Admin (the setup account) never chose a restaurant.
+    const setupAccount = (await api("GET", "/api/admin/employees")).data.staff.find((m) => m.id === "admin-initial");
+    assert.equal(setupAccount.restaurantId, null);
+    assert.equal(setupAccount.role, "admin");
+    // The migrated owner keeps their team (checked by the Admin).
+    const details = await api("GET", `/api/admin/owners/${legacyId}`);
+    assert.equal(details.status, 200);
+    assert.equal(details.data.owner.role, "owner");
+    assert.deepEqual(details.data.staff.map((s) => s.name), ["Kept Staff"]);
 
+    // The migrated account signs in as an Owner: it is sent to /owner and has no Admin access.
     await api("DELETE", "/api/admin/session");
     await page.goto(`${base}/admin/login`, { waitUntil: "load" });
     await settle(page);
     await page.locator("#admin-login-email").fill("legacy.person@gmail.com");
     await page.locator("#admin-login-password").fill("Passw0rd!");
     await page.locator('button[type="submit"]').first().click();
+    await page.waitForURL(/\/owner/, { timeout: 20000 });
+    assert.equal((await api("GET", `/api/admin/owners/${legacyId}`)).status, 403);
+    assert.equal((await api("GET", "/api/admin/employees")).status, 403, "a migrated account must not have Admin access");
+    assert.deepEqual(problems, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("an owner created by another owner can log in at /login with their saved credentials", async () => {
+  const { context, page, problems } = await openPage();
+  const api = (method, url, body) =>
+    page.evaluate(
+      async ({ method, url, body }) => {
+        const res = await fetch(url, {
+          method,
+          credentials: "same-origin",
+          headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        return { status: res.status, data: await res.json().catch(() => null) };
+      },
+      { method, url, body },
+    );
+  try {
+    // First owner signs up, then adds a second owner from the Employees page.
+    await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
+    await settle(page);
+    await page.locator("#admin-signup-name").fill("Test Owner");
+    await page.locator("#admin-signup-email").fill("owner.login1@gmail.com");
+    await page.locator("#admin-signup-password").fill("Passw0rd!");
+    await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
-    const details = await api("GET", `/api/admin/owners/${legacyId}`);
-    assert.equal(details.status, 200);
-    assert.equal(details.data.owner.role, "owner");
-    assert.deepEqual(details.data.staff.map((s) => s.name), ["Kept Staff"]);
-    assert.equal((await api("GET", "/api/admin/employees")).status, 200, "a migrated account does not have full access");
+    await settle(page);
+    assert.equal((await api("POST", "/api/admin/restaurants", { name: "Login Kitchen", area: "Johar Town", logo: "", ownerId: null })).status, 201);
+
+    await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("button", { name: "Add owner" }).click();
+    await page.locator("#owner-name").fill("Sana Owner");
+    await page.locator("#owner-email").fill("sana.owner@gmail.com");
+    await page.locator("#owner-password").fill("SanaPass123");
+    await page.locator("#owner-confirm").fill("SanaPass123");
+    await page.locator("#owner-restaurantId").selectOption({ label: "Login Kitchen — Johar Town" });
+    await page.getByRole("button", { name: "Add owner" }).click();
+    await page.getByRole("link", { name: "Sana Owner" }).first().waitFor({ timeout: 15000 });
+
+    // Sign out, then use the main /login page.
+    await api("DELETE", "/api/admin/session");
+    await page.goto(`${base}/login`, { waitUntil: "load" });
+    await settle(page);
+
+    // A wrong password is still refused.
+    await page.locator("#login-email").fill("sana.owner@gmail.com");
+    await page.locator("#login-password").fill("WrongPass999");
+    await page.getByRole("button", { name: "Log in", exact: true }).click();
+    await page.getByText("Email or password is incorrect.").waitFor({ timeout: 15000 });
+    assert.match(page.url(), /\/login$/);
+
+    // The saved credentials open the Owner dashboard (not the Admin dashboard).
+    await page.locator("#login-password").fill("SanaPass123");
+    await page.getByRole("button", { name: "Log in", exact: true }).click();
+    await page.waitForURL(/\/owner/, { timeout: 20000 });
+    await settle(page);
+    assert.equal((await api("GET", "/api/owner/session")).status, 200, "the owner was not signed in to the Owner dashboard");
+    assert.equal((await api("GET", "/api/admin/employees")).status, 403, "an Owner must not reach Admin APIs");
+    // Not signed in as a customer.
+    assert.equal((await api("GET", "/api/customer/profile")).data.user, null);
     assert.deepEqual(problems, []);
   } finally {
     await context.close();
@@ -689,7 +751,7 @@ test("an owner account is deleted permanently, cannot log in again, and business
       },
       { method, url, body },
     );
-  const store = (name) => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "[]"), `meg-local:${name}`);
+  const store = (name) => stored(name);
   const BUSINESS = ["orders", "payments", "grocery_items", "purchases", "attendance_records", "riders", "customers", "products", "categories"];
   try {
     // Signed-out callers cannot delete anything.
@@ -701,7 +763,6 @@ test("an owner account is deleted permanently, cannot log in again, and business
     await page.locator("#admin-signup-name").fill("Main Admin");
     await page.locator("#admin-signup-email").fill("main.admin1@gmail.com");
     await page.locator("#admin-signup-password").fill("Passw0rd!");
-    await page.locator("#admin-signup-confirm").fill("Passw0rd!");
     await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     await settle(page);
@@ -715,6 +776,14 @@ test("an owner account is deleted permanently, cannot log in again, and business
     assert.equal(created.status, 201);
     const doomedId = created.data.account.id;
     assert.equal((await api("GET", `/api/admin/restaurants/${restId}`)).data.restaurant.ownerId, doomedId);
+    // The doomed owner signs in elsewhere; that session must stop working when the account is deleted.
+    const doomedLogin = await fetch(`${base}/api/admin/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "doomed.owner@gmail.com", password: "DoomPass123" }),
+    });
+    assert.equal(doomedLogin.status, 200);
+    const doomedCookie = doomedLogin.headers.getSetCookie().find((c) => c.startsWith("meg_admin_session=")).split(";")[0];
 
     assert.equal((await api("POST", `/api/admin/restaurants/${restId}/grocery`, { name: "Flour", unit: "kg", quantity: 20, available: 15 })).status, 201);
     assert.equal((await api("POST", `/api/admin/restaurants/${restId}/purchases`, { supplier: "Metro", description: "Flour", amount: 5000, date: "2026-11-10" })).status, 201);
@@ -818,10 +887,10 @@ test("an owner account is deleted permanently, cannot log in again, and business
     assert.ok(!activity.some((a) => a.managerId === doomedId || a.managerId === replacement.data.account.id), "a deleted owner's activity was kept");
     assert.equal(activity.filter((a) => a.managerId === adminId && a.action === "Owner deleted").length, 2);
 
-    // A session saved for the deleted account no longer works and is cleared.
-    await page.evaluate((id) => window.localStorage.setItem("meg.session.admin", JSON.stringify({ id, exp: Date.now() + 60000 })), doomedId);
-    assert.equal((await api("GET", "/api/admin/employees")).status, 401);
-    assert.equal(await page.evaluate(() => window.localStorage.getItem("meg.session.admin")), null);
+    // The deleted owner's open session no longer works, and its server record is gone.
+    const afterDelete = await fetch(`${base}/api/admin/employees`, { headers: { cookie: doomedCookie } });
+    assert.equal(afterDelete.status, 401);
+    assert.equal((await stored("sessions", { accountId: doomedId })).length, 0);
 
     // The old credentials are refused at both login endpoints and on the /login page.
     assert.equal((await api("POST", "/api/admin/session", { email: "doomed.owner@gmail.com", password: "DoomPass123" })).status, 401);
@@ -833,6 +902,166 @@ test("an owner account is deleted permanently, cannot log in again, and business
     await page.getByRole("button", { name: "Log in", exact: true }).click();
     await page.getByText("Email or password is incorrect.").waitFor({ timeout: 15000 });
     assert.match(page.url(), /\/login$/);
+    assert.deepEqual(problems, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("customers still log in at /login", async () => {
+  const { context, page, problems } = await openPage();
+  try {
+    await page.goto(`${base}/signup`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByLabel("Full name").fill("Login Customer");
+    await page.getByLabel("Email", { exact: true }).fill("customer.login2@gmail.com");
+    await page.getByLabel("Phone number").fill("03001234567");
+    await page.getByLabel("Password", { exact: true }).fill("Passw0rd!");
+    await page.getByLabel("Confirm password").fill("Passw0rd!");
+    await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
+    await page.waitForURL(/\/account/, { timeout: 20000 });
+    await page.evaluate(() => fetch("/api/customer/session", { method: "DELETE", credentials: "same-origin" }));
+
+    await page.goto(`${base}/login`, { waitUntil: "load" });
+    await settle(page);
+    await page.locator("#login-email").fill("customer.login2@gmail.com");
+    await page.locator("#login-password").fill("Passw0rd!");
+    await page.getByRole("button", { name: "Log in", exact: true }).click();
+    await page.waitForURL(/\/account/, { timeout: 20000 });
+    assert.deepEqual(problems, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("every password field has a show/hide password button", async () => {
+  const { context, page, problems } = await openPage();
+  // Checks each password field on the page: hidden by default, shown after one click, hidden again after another.
+  const checkToggles = async (where, expectedCount) => {
+    const fields = page.locator('input[type="password"]');
+    await fields.first().waitFor({ timeout: 15000 });
+    const ids = await fields.evaluateAll((els) => els.map((el) => el.id));
+    assert.equal(ids.length, expectedCount, `${where}: expected ${expectedCount} password fields`);
+    for (const id of ids) {
+      const input = page.locator(`#${id}`);
+      const toggle = page.locator(`button[aria-controls="${id}"]`);
+      assert.equal(await toggle.getAttribute("aria-label"), "Show password", `${where} #${id}: no show button`);
+      await toggle.click();
+      assert.equal(await input.getAttribute("type"), "text", `${where} #${id}: password not shown`);
+      assert.equal(await toggle.getAttribute("aria-label"), "Hide password");
+      await toggle.click();
+      assert.equal(await input.getAttribute("type"), "password", `${where} #${id}: password not hidden again`);
+    }
+  };
+  try {
+    // /admin/login opens on Login (one password field); /admin/signup opens on Sign Up (one password field).
+    for (const [route, count] of [["/login", 1], ["/signup", 2], ["/admin/login", 1], ["/admin/signup", 1]]) {
+      await page.goto(`${base}${route}`, { waitUntil: "load" });
+      await settle(page);
+      await checkToggles(route, count);
+    }
+
+    // Owner's "Add owner" form.
+    await page.locator("#admin-signup-name").fill("Test Owner");
+    await page.locator("#admin-signup-email").fill("owner.eye@gmail.com");
+    await page.locator("#admin-signup-password").fill("Passw0rd!");
+    await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
+    await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
+    await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("button", { name: "Add owner" }).click();
+    await checkToggles("/admin/employees", 2);
+
+    // Customer "Change password" form.
+    await page.goto(`${base}/signup`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByLabel("Full name").fill("Eye Customer");
+    await page.getByLabel("Email", { exact: true }).fill("customer.eye@gmail.com");
+    await page.getByLabel("Phone number").fill("03001234567");
+    await page.getByLabel("Password", { exact: true }).fill("Passw0rd!");
+    await page.getByLabel("Confirm password").fill("Passw0rd!");
+    await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
+    await page.waitForURL(/\/account/, { timeout: 20000 });
+    await page.goto(`${base}/account/profile`, { waitUntil: "load" });
+    await settle(page);
+    await checkToggles("/account/profile", 3);
+    assert.deepEqual(problems, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("old browser data is removed on load and cannot sign anyone in", async () => {
+  const { context, page, problems } = await openPage();
+  try {
+    // A browser that used the old localStorage build: accounts, sessions, business records and caches,
+    // plus the two personal preferences that stay (cart and location).
+    await page.goto(`${base}/faq`, { waitUntil: "load" });
+    await page.evaluate(() => {
+      const admin = { _id: "admin-initial", name: "Old Admin", email: "old.admin1@gmail.com", passwordHash: "pbkdf2$00$00", role: "owner", active: true };
+      localStorage.setItem("meg-local:admins", JSON.stringify([admin]));
+      localStorage.setItem("meg-local:customers", JSON.stringify([{ _id: "user-old", email: "old@example.com" }]));
+      localStorage.setItem("meg-local:orders", JSON.stringify([{ _id: "MEG-1" }]));
+      localStorage.setItem("meg-local:restaurants", JSON.stringify([{ _id: "rest-old", name: "Old Diner" }]));
+      localStorage.setItem("meg.session.admin", JSON.stringify({ id: "admin-initial", exp: Date.now() + 3600000 }));
+      localStorage.setItem("meg.session.customer", JSON.stringify({ id: "user-old", exp: Date.now() + 3600000 }));
+      localStorage.setItem("meg-orders-v1", "[]");
+      localStorage.setItem("meg-products-v1", "[]");
+      localStorage.setItem("meg-categories-v1", "[]");
+      localStorage.setItem("meg-cart-v1", "[]");
+      localStorage.setItem("meg-location-v1", JSON.stringify({ orderType: "pickup", city: "Lahore", area: "Gulberg" }));
+    });
+
+    // The old session does not open the admin area: the server has no such session.
+    await page.goto(`${base}/admin`, { waitUntil: "load" });
+    await page.waitForURL(/\/admin\/login/, { timeout: 15000 });
+    await settle(page);
+    const keys = await page.evaluate(() => Object.keys(window.localStorage).sort());
+    assert.deepEqual(keys, ["meg-cart-v1", "meg-location-v1"], "legacy keys were not removed");
+    assert.equal((await stored("admins")).length, 0, "old browser accounts reached the database");
+    // The page opens on the Login view.
+    await page.getByRole("heading", { name: "Admin Login" }).waitFor({ timeout: 15000 });
+    assert.deepEqual(problems, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("first-Admin sign-up validates input and closes once an Admin exists", async () => {
+  const { context, page, problems } = await openPage();
+  try {
+    await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
+    await settle(page);
+    // Invalid details are refused and nothing is created.
+    await page.locator("#admin-signup-name").fill("Real Admin");
+    await page.locator("#admin-signup-email").fill("not-a-gmail@example.com");
+    await page.locator("#admin-signup-password").fill("short");
+    await page.getByRole("button", { name: "Create Admin Account" }).click();
+    await page.getByText("Use a valid Gmail address ending in @gmail.com.").waitFor({ timeout: 15000 });
+    assert.equal((await stored("admins")).length, 0, "an Admin was created from invalid input");
+
+    await page.locator("#admin-signup-email").fill("real.admin1@gmail.com");
+    await page.locator("#admin-signup-password").fill("Passw0rd!");
+    await page.getByRole("button", { name: "Create Admin Account" }).click();
+    await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
+    assert.equal((await stored("admins")).length, 1);
+
+    // Setup is closed now, even with the right key.
+    const second = await page.evaluate(async (setupKey) => {
+      const res = await fetch("/api/admin/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setupKey, name: "Second", email: "second.admin@gmail.com", password: "Passw0rd!", confirm: "Passw0rd!" }),
+        credentials: "omit",
+      });
+      return res.status;
+    }, TEST_SETUP_KEY);
+    assert.equal(second, 403);
+    assert.equal((await stored("admins")).length, 1);
+    await context.clearCookies();
+    await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
+    await page.getByRole("heading", { name: "Admin Sign Up Closed" }).waitFor({ timeout: 15000 });
+    assert.equal(await page.locator("#admin-signup-name").count(), 0);
     assert.deepEqual(problems, []);
   } finally {
     await context.close();

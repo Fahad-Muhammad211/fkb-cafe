@@ -1,13 +1,12 @@
 import { PRODUCT_IMAGES } from "@/data/assets";
 import { MENU_ITEMS } from "@/data/menu";
 import { saveCatalogList } from "@/lib/catalogApi";
-import { createStorageStore, writeJSON } from "@/lib/storage";
+import { createMemoryStore } from "@/lib/storage";
 import type { MenuItem } from "@/types";
 
-export const PRODUCTS_STORAGE_KEY = "meg-products-v1";
-
-// Shared store: the storefront menu and the admin product manager both read it.
-export const productsStore = createStorageStore(PRODUCTS_STORAGE_KEY);
+// Shared store: the storefront menu and the admin product manager both read it. The menu lives in
+// MongoDB; this is the page's in-memory copy, loaded by DataSync and never written to browser storage.
+export const productsStore = createMemoryStore();
 
 // Fills in a configured photo (data/assets.ts) for products that have no image of their own.
 const withAssetImage = (item: MenuItem): MenuItem =>
@@ -26,14 +25,13 @@ export function parseProducts(raw: string | null | undefined): MenuItem[] {
   }
 }
 
-// Stores the list in this browser only. Used when loading the menu from the server.
+// Keeps the list in memory for this page. Used when loading the menu from the server.
 export function cacheProducts(products: MenuItem[]): boolean {
-  const saved = writeJSON(PRODUCTS_STORAGE_KEY, products);
-  productsStore.notify();
-  return saved;
+  productsStore.set(products);
+  return true;
 }
 
-// Admin save: updates this browser straight away, then stores the full list in the local store.
+// Admin save: updates this page straight away, then stores the full list on the server.
 export function saveProducts(products: MenuItem[]): boolean {
   const saved = cacheProducts(products);
   void saveCatalogList("/api/admin/products", { products });

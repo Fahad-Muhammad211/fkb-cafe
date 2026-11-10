@@ -1,14 +1,13 @@
 import { CATEGORY_IMAGES } from "@/data/assets";
 import { ICON_MAP, MENU_CATEGORIES } from "@/data/menu";
 import { saveCatalogList } from "@/lib/catalogApi";
-import { createStorageStore, writeJSON } from "@/lib/storage";
+import { createMemoryStore } from "@/lib/storage";
 import type { MenuCategory, StoredCategory } from "@/types";
 import { Utensils } from "lucide-react";
 
-export const CATEGORIES_STORAGE_KEY = "meg-categories-v1";
-
-// Shared store: the storefront tabs and the admin category manager both read it.
-export const categoriesStore = createStorageStore(CATEGORIES_STORAGE_KEY);
+// Shared store: the storefront tabs and the admin category manager both read it. Categories live in
+// MongoDB; this is the page's in-memory copy, loaded by DataSync and never written to browser storage.
+export const categoriesStore = createMemoryStore();
 
 export const ICON_NAMES = Object.keys(ICON_MAP);
 
@@ -49,14 +48,13 @@ export function toMenuCategory(c: StoredCategory): MenuCategory {
   };
 }
 
-// Stores the list in this browser only. Used when loading the menu from the server.
+// Keeps the list in memory for this page. Used when loading the menu from the server.
 export function cacheCategories(categories: StoredCategory[]): boolean {
-  const saved = writeJSON(CATEGORIES_STORAGE_KEY, categories);
-  categoriesStore.notify();
-  return saved;
+  categoriesStore.set(categories);
+  return true;
 }
 
-// Admin save: updates this browser straight away, then stores the full list in the local store.
+// Admin save: updates this page straight away, then stores the full list on the server.
 export function saveCategories(categories: StoredCategory[]): boolean {
   const saved = cacheCategories(categories);
   void saveCatalogList("/api/admin/categories", { categories });

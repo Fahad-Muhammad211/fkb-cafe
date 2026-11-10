@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { isValidEmail } from "@/lib/validation";
+import { saveAllOrders } from "@/lib/orders";
 import type { AuthErrors } from "@/lib/auth";
 
 export function LoginForm() {
@@ -36,7 +38,12 @@ export function LoginForm() {
     setSubmitting(true);
     const result = await logIn(email, password);
     setSubmitting(false);
-    if (result.ok) {
+    if (result.ok && "owner" in result) {
+      // Owner credentials: open the owner dashboard. As on the admin login page, a shared browser
+      // keeps no cached order list from the previous person.
+      saveAllOrders([]);
+      window.location.replace(result.redirect);
+    } else if (result.ok) {
       // Full page load, so the server guard sees the new session cookie. A client-side push could reuse a
       // cached "/account" prefetch that was redirected to /login while the visitor was signed out.
       window.location.replace("/account");
@@ -73,9 +80,8 @@ export function LoginForm() {
         </FormField>
 
         <FormField id="login-password" label="Password" error={errors.password}>
-          <input
+          <PasswordInput
             id="login-password"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

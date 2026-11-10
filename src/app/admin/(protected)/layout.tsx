@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// Every admin page reads the signed-in session from this browser's localStorage, so none of them can
+// Every admin page asks the server for the signed-in session (an httpOnly cookie), so none of them can
 // render a static shell on the server. Opting the layout out of instant-navigation validation (which
 // otherwise reports each admin page as a "dropped segment" in development) is the documented way to
 // mark that. It applies to every page below this layout.

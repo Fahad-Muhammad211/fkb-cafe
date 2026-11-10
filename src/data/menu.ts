@@ -29,7 +29,7 @@ export const MENU_CATEGORIES: MenuCategory[] = [
   { id: "meg-dips", label: "MEG Dips", icon: Droplets },
 ];
 
-// Icons are stored by name in localStorage, so the category store maps names back to icons.
+// Icons are stored by name in the database, so the category store maps names back to icons.
 export const ICON_MAP: Record<string, LucideIcon> = {
   Salad,
   Beef,

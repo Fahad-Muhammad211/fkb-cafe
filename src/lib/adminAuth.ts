@@ -3,9 +3,10 @@
 // server, so this module never reads or writes it.
 
 export type AdminAuthErrors = Record<string, string>;
-export type AdminAuthResult = { ok: true } | { ok: false; errors: AdminAuthErrors };
+// `redirect` is where the server says the signed-in account belongs: /admin for the Admin, /owner for an Owner.
+export type AdminAuthResult = { ok: true; redirect: "/admin" | "/owner" } | { ok: false; errors: AdminAuthErrors };
 
-const UNREACHABLE: AdminAuthResult = { ok: false, errors: { form: "Could not complete this request in this browser. Reload the page and try again." } };
+const UNREACHABLE: AdminAuthResult = { ok: false, errors: { form: "Could not reach the server. Check your connection and try again." } };
 
 // Reads the shared error shape { error, errors? } and maps it to form errors.
 async function send(url: string, method: "POST" | "DELETE", body?: unknown): Promise<AdminAuthResult> {
@@ -16,15 +17,16 @@ async function send(url: string, method: "POST" | "DELETE", body?: unknown): Pro
       body: body ? JSON.stringify(body) : undefined,
       credentials: "same-origin",
     });
-    if (res.ok) return { ok: true };
-    const data = (await res.json().catch(() => null)) as { error?: string; errors?: AdminAuthErrors } | null;
+    const data = (await res.json().catch(() => null)) as { error?: string; errors?: AdminAuthErrors; redirect?: unknown } | null;
+    if (res.ok) return { ok: true, redirect: data?.redirect === "/owner" ? "/owner" : "/admin" };
     return { ok: false, errors: data?.errors ?? { form: data?.error ?? "Something went wrong. Please try again." } };
   } catch {
     return UNREACHABLE;
   }
 }
 
-export function adminSignupRequest(input: { name: string; email: string; password: string; confirm: string }) {
+// First-Admin signup. No setup key is sent: the server checks ADMIN_SETUP_KEY in its own environment.
+export function adminSignupRequest(input: { name: string; email: string; password: string }) {
   return send("/api/admin/accounts", "POST", input);
 }
 
