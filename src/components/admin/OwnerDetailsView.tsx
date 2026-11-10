@@ -3,8 +3,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Pencil, Plus, Power, Store, UserPlus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Pencil, Plus, Power, Store, Trash2, UserPlus, X } from "lucide-react";
 import { fieldClass, ghostClass, panelClass, Pill, primaryClass, type RestaurantOption } from "@/components/admin/EmployeesView";
+import { DeleteOwnerDialog, dangerClass } from "@/components/admin/DeleteOwnerDialog";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
 import { canAccess, type StaffRole } from "@/lib/permissions";
 import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
@@ -124,9 +125,11 @@ function OwnerContent({
   reload: () => void;
 }) {
   const { owner, staff, activity } = data;
+  const router = useRouter();
   const restaurant = restaurants.find((r) => r.id === owner.restaurantId) ?? null;
   const [restaurantDraft, setRestaurantDraft] = useState(owner.restaurantId ?? "");
   const [busy, setBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Account-level changes go through the employees endpoint, which owns the owner accounts.
   const patchOwner = async (body: Record<string, unknown>, success: string) => {
@@ -174,10 +177,21 @@ function OwnerContent({
           <div className="flex items-center justify-between gap-3">
             <h2 id="account-heading" className="font-bold">Account details</h2>
             {!isSelf && (
-              <button type="button" onClick={toggleActive} disabled={busy} className={ghostClass}>
-                <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                {owner.active ? "Switch off" : "Switch on"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={toggleActive} disabled={busy} className={ghostClass}>
+                  <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
+                  {owner.active ? "Switch off" : "Switch on"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={busy}
+                  className={dangerClass}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Delete
+                </button>
+              </div>
             )}
           </div>
           <dl className="grid gap-3 text-sm">
@@ -263,6 +277,18 @@ function OwnerContent({
           </ol>
         )}
       </section>
+
+      {confirmingDelete && (
+        <DeleteOwnerDialog
+          owner={owner}
+          onCancel={() => setConfirmingDelete(false)}
+          // The account is gone, so its page is left for the Employees list, which loads the accounts again.
+          onDeleted={() => {
+            router.replace("/admin/employees");
+            router.refresh();
+          }}
+        />
+      )}
     </>
   );
 }

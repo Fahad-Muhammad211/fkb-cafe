@@ -20,6 +20,11 @@ export async function getAdminSession(): Promise<StaffSession | null> {
   const accountId = readSession("admin");
   if (!accountId) return null;
   const account = await findAdminAccount(accountId);
-  if (!account || !account.active) return null;
+  if (!account) {
+    // The account was deleted: drop the saved session so it cannot be used again.
+    endSession("admin");
+    return null;
+  }
+  if (!account.active) return null;
   return { id: account.id, name: account.name, email: account.email, role: account.role };
 }

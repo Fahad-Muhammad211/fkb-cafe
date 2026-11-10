@@ -2,8 +2,9 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowRight, Power, ShieldCheck, UserPlus, X } from "lucide-react";
+import { ArrowRight, Power, ShieldCheck, Trash2, UserPlus, X } from "lucide-react";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
+import { DeleteOwnerDialog, dangerClass } from "@/components/admin/DeleteOwnerDialog";
 import type { StaffRole } from "@/lib/permissions";
 import { isValidName, isValidPassword } from "@/lib/validation";
 
@@ -55,6 +56,7 @@ export function EmployeesView({ currentId }: { currentId: string }) {
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [deleting, setDeleting] = useState<StaffMember | null>(null);
 
   const staff = data?.staff ?? [];
 
@@ -149,6 +151,19 @@ export function EmployeesView({ currentId }: { currentId: string }) {
                         {member.active ? "Switch off" : "Switch on"}
                       </button>
                     )}
+                    {/* Your own account cannot be deleted, so it has no Delete button. */}
+                    {!isSelf && (
+                      <button
+                        type="button"
+                        onClick={() => setDeleting(member)}
+                        disabled={busyId === member.id}
+                        aria-label={`Delete ${member.name}`}
+                        className={dangerClass}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -160,6 +175,23 @@ export function EmployeesView({ currentId }: { currentId: string }) {
             );
           })}
         </ul>
+      )}
+
+      {deleting && (
+        <DeleteOwnerDialog
+          owner={deleting}
+          onCancel={() => setDeleting(null)}
+          onDeleted={({ name, vacatedRestaurants }) => {
+            setDeleting(null);
+            setNotice({
+              tone: "success",
+              text:
+                `${name} was deleted.` +
+                (vacatedRestaurants.length > 0 ? ` ${vacatedRestaurants.join(", ")} now has no owner; add a new owner for it.` : ""),
+            });
+            reload();
+          }}
+        />
       )}
     </div>
   );

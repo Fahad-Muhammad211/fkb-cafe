@@ -4,7 +4,7 @@
 
 import { readBody, apiError, json, text, clientKey } from "@/lib/local/http";
 import { createCustomer, verifyCustomer, changeCustomerPassword, listCustomers, updateCustomerProfile } from "@/lib/local/customers";
-import { createInitialAdminAccount, createOwnerAccount, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/local/adminAccounts";
+import { createInitialAdminAccount, createOwnerAccount, deleteOwnerAccount, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/local/adminAccounts";
 import { endAdminSession, getAdminSession, startAdminSession } from "@/lib/local/adminSession";
 import { endCustomerSession, getCustomerSession, startCustomerSession } from "@/lib/local/customerSession";
 import { checkStaff } from "@/lib/local/staff";
@@ -471,6 +471,18 @@ const routes: Route[] = [
       );
       if (!result.ok) return apiError(result.status, result.error);
       return json({ ok: true, member: result.member });
+    },
+  },
+  {
+    // Permanent deletion of an owner account. The checks live here and in deleteOwnerAccount, not only in the page.
+    method: "DELETE",
+    pattern: /^\/api\/admin\/employees\/([^/]+)$/,
+    handler: async (_request, [id]) => {
+      const check = await checkStaff("staff");
+      if (!check.ok) return apiError(check.status, check.error);
+      const result = await deleteOwnerAccount(id, { id: check.session.id, name: check.session.name });
+      if (!result.ok) return apiError(result.status, result.error);
+      return json({ ok: true, deleted: result.deleted, vacatedRestaurants: result.vacatedRestaurants });
     },
   },
   {

@@ -673,3 +673,168 @@ test("accounts saved with the old manager role are migrated to owner and keep th
     await context.close();
   }
 });
+
+test("an owner account is deleted permanently, cannot log in again, and business records are kept", async () => {
+  const { context, page, problems } = await openPage();
+  const api = (method, url, body) =>
+    page.evaluate(
+      async ({ method, url, body }) => {
+        const res = await fetch(url, {
+          method,
+          credentials: "same-origin",
+          headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        return { status: res.status, data: await res.json().catch(() => null) };
+      },
+      { method, url, body },
+    );
+  const store = (name) => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "[]"), `meg-local:${name}`);
+  const BUSINESS = ["orders", "payments", "grocery_items", "purchases", "attendance_records", "riders", "customers", "products", "categories"];
+  try {
+    // Signed-out callers cannot delete anything.
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    assert.equal((await api("DELETE", "/api/admin/employees/admin-initial")).status, 401);
+
+    await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
+    await settle(page);
+    await page.locator("#admin-signup-name").fill("Main Admin");
+    await page.locator("#admin-signup-email").fill("main.admin1@gmail.com");
+    await page.locator("#admin-signup-password").fill("Passw0rd!");
+    await page.locator("#admin-signup-confirm").fill("Passw0rd!");
+    await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
+    await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
+    await settle(page);
+    const adminId = "admin-initial";
+
+    // A restaurant run by a second owner, with business records of its own.
+    const rest = await api("POST", "/api/admin/restaurants", { name: "Delete Test Diner", area: "Gulberg", logo: "", ownerId: null });
+    assert.equal(rest.status, 201);
+    const restId = rest.data.restaurant.id;
+    const created = await api("POST", "/api/admin/accounts", { name: "Doomed Owner", email: "doomed.owner@gmail.com", password: "DoomPass123", confirm: "DoomPass123", restaurantId: restId });
+    assert.equal(created.status, 201);
+    const doomedId = created.data.account.id;
+    assert.equal((await api("GET", `/api/admin/restaurants/${restId}`)).data.restaurant.ownerId, doomedId);
+
+    assert.equal((await api("POST", `/api/admin/restaurants/${restId}/grocery`, { name: "Flour", unit: "kg", quantity: 20, available: 15 })).status, 201);
+    assert.equal((await api("POST", `/api/admin/restaurants/${restId}/purchases`, { supplier: "Metro", description: "Flour", amount: 5000, date: "2026-11-10" })).status, 201);
+    assert.equal((await api("POST", `/api/admin/restaurants/${restId}/riders`, { name: "Rider One", phone: "03001234567" })).status, 201);
+    const catalog = await api("GET", "/api/catalog");
+    let order = null;
+    for (const item of catalog.data.products ?? []) {
+      const r = await api("POST", "/api/orders", {
+        clientOrderId: `del${Date.now()}${Math.random().toString(36).slice(2)}`,
+        fulfilment: "delivery",
+        restaurantId: restId,
+        customer: { name: "Order Keeper", phone: "03001234567", address: "House 1, Street 2, Gulberg", notes: "" },
+        lines: [{ id: `line-${item.id}`, itemId: item.id, name: item.name, unitPrice: item.price, qty: 1, options: [], instructions: "" }],
+      });
+      if (r.status === 201) {
+        order = r.data.order;
+        break;
+      }
+    }
+    assert.ok(order, "could not place a test order");
+
+    // Owners with staff under them cannot be deleted until the staff are moved.
+    const staff = await api("POST", `/api/admin/owners/${doomedId}/staff`, { name: "Team Member" });
+    assert.equal(staff.status, 201);
+    const blocked = await api("DELETE", `/api/admin/employees/${doomedId}`);
+    assert.equal(blocked.status, 409);
+    assert.match(blocked.data.error, /Move them to another owner/);
+
+    // On the Employees list every other account has a Delete button; your own account has none.
+    await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("button", { name: "Delete Doomed Owner" }).waitFor({ timeout: 15000 });
+    assert.equal(await page.getByRole("button", { name: "Delete Main Admin" }).count(), 0, "own account can be deleted");
+    // The dialog explains why an owner with staff cannot be deleted yet, and does not offer the delete.
+    await page.getByRole("button", { name: "Delete Doomed Owner" }).click();
+    const listDialog = page.getByRole("alertdialog", { name: "Delete Doomed Owner permanently?" });
+    await listDialog.getByText("1 staff member works under this owner. Move them to another owner first.").waitFor({ timeout: 15000 });
+    assert.ok(await listDialog.getByRole("button", { name: "Delete permanently" }).isDisabled());
+    await page.keyboard.press("Escape");
+    await listDialog.waitFor({ state: "detached" });
+    assert.equal((await api("PATCH", `/api/admin/staff/${staff.data.staff.id}`, { ownerId: adminId })).status, 200);
+
+    // Nobody can delete their own account, and unknown accounts are 404.
+    assert.equal((await api("DELETE", `/api/admin/employees/${adminId}`)).status, 400);
+    assert.equal((await api("DELETE", "/api/admin/employees/admin-missing")).status, 404);
+
+    const before = {};
+    for (const name of BUSINESS) before[name] = await store(name);
+    assert.equal(before.orders.length, 1);
+
+    // Delete from the details page, through the confirmation dialog.
+    await page.goto(`${base}/admin/employees/${doomedId}`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("heading", { name: "Doomed Owner" }).waitFor({ timeout: 15000 });
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    const dialog = page.getByRole("alertdialog", { name: "Delete Doomed Owner permanently?" });
+    await dialog.waitFor();
+    // Cancel keeps the account.
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await dialog.waitFor({ state: "detached" });
+    assert.ok((await store("admins")).some((a) => a._id === doomedId));
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await dialog.getByRole("button", { name: "Delete permanently" }).click();
+    await page.waitForURL(/\/admin\/employees$/, { timeout: 20000 });
+    await page.getByRole("link", { name: "Main Admin" }).first().waitFor({ timeout: 15000 });
+    assert.equal(await page.getByRole("link", { name: "Doomed Owner" }).count(), 0, "deleted owner still listed");
+
+    // The account and its credentials are gone; the restaurant is kept with no owner.
+    const admins = await store("admins");
+    assert.ok(!admins.some((a) => a._id === doomedId || a.email === "doomed.owner@gmail.com"), "account was not deleted");
+    const restaurants = await store("restaurants");
+    const kept = restaurants.find((r) => r._id === restId);
+    assert.ok(kept, "restaurant was deleted");
+    assert.equal(kept.managerId, null);
+    for (const name of BUSINESS) assert.deepEqual(await store(name), before[name], `${name} changed`);
+    assert.ok((await store("staff_members")).some((s) => s._id === staff.data.staff.id), "staff record was removed");
+    assert.equal((await api("GET", `/api/admin/owners/${doomedId}`)).status, 404);
+    assert.equal((await api("GET", `/api/admin/employees`)).data.staff.length, 1);
+
+    // The restaurant can be given a new owner.
+    const replacement = await api("POST", "/api/admin/accounts", { name: "New Owner", email: "new.owner1@gmail.com", password: "NewPass1234", confirm: "NewPass1234", restaurantId: restId });
+    assert.equal(replacement.status, 201);
+    assert.equal((await api("GET", `/api/admin/restaurants/${restId}`)).data.restaurant.ownerId, replacement.data.account.id);
+
+    // Delete from the Employees list: the list updates at once, without a reload.
+    await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("button", { name: "Delete New Owner" }).click();
+    const newOwnerDialog = page.getByRole("alertdialog", { name: "Delete New Owner permanently?" });
+    await newOwnerDialog.getByText("Delete Test Diner is kept. If this owner runs it, you can add a new owner for it.").waitFor({ timeout: 15000 });
+    await newOwnerDialog.getByRole("button", { name: "Delete permanently" }).click();
+    await page.getByText("New Owner was deleted. Delete Test Diner now has no owner; add a new owner for it.").waitFor({ timeout: 15000 });
+    await page.getByRole("link", { name: "New Owner" }).waitFor({ state: "detached", timeout: 15000 });
+    assert.match(page.url(), /\/admin\/employees$/);
+    assert.ok(!(await store("admins")).some((a) => a._id === replacement.data.account.id));
+    assert.equal((await store("restaurants")).find((r) => r._id === restId).managerId, null);
+    for (const name of BUSINESS) assert.deepEqual(await store(name), before[name], `${name} changed after the list delete`);
+
+    // The deleted owners' own activity history is gone; the "Owner deleted" entries on the acting owner's history stay.
+    const activity = await store("manager_activity");
+    assert.ok(!activity.some((a) => a.managerId === doomedId || a.managerId === replacement.data.account.id), "a deleted owner's activity was kept");
+    assert.equal(activity.filter((a) => a.managerId === adminId && a.action === "Owner deleted").length, 2);
+
+    // A session saved for the deleted account no longer works and is cleared.
+    await page.evaluate((id) => window.localStorage.setItem("meg.session.admin", JSON.stringify({ id, exp: Date.now() + 60000 })), doomedId);
+    assert.equal((await api("GET", "/api/admin/employees")).status, 401);
+    assert.equal(await page.evaluate(() => window.localStorage.getItem("meg.session.admin")), null);
+
+    // The old credentials are refused at both login endpoints and on the /login page.
+    assert.equal((await api("POST", "/api/admin/session", { email: "doomed.owner@gmail.com", password: "DoomPass123" })).status, 401);
+    assert.equal((await api("POST", "/api/customer/session", { email: "doomed.owner@gmail.com", password: "DoomPass123" })).status, 401);
+    await page.goto(`${base}/login`, { waitUntil: "load" });
+    await settle(page);
+    await page.locator("#login-email").fill("doomed.owner@gmail.com");
+    await page.locator("#login-password").fill("DoomPass123");
+    await page.getByRole("button", { name: "Log in", exact: true }).click();
+    await page.getByText("Email or password is incorrect.").waitFor({ timeout: 15000 });
+    assert.match(page.url(), /\/login$/);
+    assert.deepEqual(problems, []);
+  } finally {
+    await context.close();
+  }
+});

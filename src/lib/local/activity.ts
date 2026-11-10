@@ -44,6 +44,12 @@ export async function logActivity(ownerId: string, actor: Actor, action: string,
   });
 }
 
+// Removes one owner's own history. Used when that owner's account is deleted: nothing can show it any
+// more. Entries on other owners' histories (including the "Owner deleted" entry) are kept.
+export async function deleteActivityFor(ownerId: string): Promise<void> {
+  await (await activityCollection()).deleteMany({ managerId: ownerId });
+}
+
 // Newest first.
 export async function listActivityFor(ownerId: string): Promise<ActivityEntry[]> {
   const docs = await (await activityCollection()).find({ managerId: ownerId }).sort({ createdAt: -1 }).limit(200).toArray();

@@ -3,7 +3,7 @@ import { isValidName, isValidPassword } from "@/lib/validation";
 import { getCollection, isDuplicateKeyError } from "@/lib/local/collections";
 import { hashPassword, passwordMatches } from "@/lib/local/passwords";
 import type { StaffRole } from "@/lib/permissions";
-import { logActivity, type Actor } from "@/lib/local/activity";
+import { deleteActivityFor, logActivity, type Actor } from "@/lib/local/activity";
 
 // Admin accounts live in the "admins" collection. Passwords are hashed with scrypt and never
 // sent back to the browser or written in plain text.
@@ -266,6 +266,58 @@ export async function findStaffMember(id: string): Promise<StaffMember | null> {
 // The owners who belong to one restaurant.
 export async function listOwnersOfRestaurant(restaurantId: string): Promise<StaffMember[]> {
   return (await listStaff()).filter((member) => member.restaurantId === restaurantId);
+}
+
+export type OwnerDeleteResult =
+  | { ok: true; deleted: { id: string; name: string; email: string }; vacatedRestaurants: string[] }
+  | { ok: false; status: number; error: string };
+
+// The staff records saved under each owner. Read straight from the store because
+// lib/local/staffMembers.ts imports this module.
+const teamCollection = () => getCollection<{ _id: string; managerId: string }>("staff_members");
+
+// Permanently deletes an owner account. The account record holds the login email and password hash,
+// so removing it removes the credentials: the owner can no longer log in, and every saved session for
+// this ID stops working because getAdminSession reads the account on each request.
+// The owner's own activity history is removed with the account. Any restaurant this owner runs is left
+// with no owner, ready for a new one (the next owner added for it runs it). The restaurant itself and
+// its orders, payments, grocery, purchases, attendance and riders are not touched.
+// Refused for the signed-in owner's own account, and while staff still work under this owner (move
+// them to another owner first, so no staff record is left without one).
+export async function deleteOwnerAccount(targetId: string, actor: Actor): Promise<OwnerDeleteResult> {
+  const collection = await adminsCollection();
+  const target = await collection.findOne({ _id: targetId });
+  if (!target) return { ok: false, status: 404, error: "Account not found." };
+  if (targetId === actor.id) return { ok: false, status: 400, error: "You cannot delete your own account." };
+
+  const team = await (await teamCollection()).countDocuments({ managerId: targetId });
+  if (team > 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: `${target.name} still has ${team} staff ${team === 1 ? "member" : "members"}. Move them to another owner before deleting this account.`,
+    };
+  }
+
+  const { deletedCount } = await collection.deleteOne({ _id: targetId });
+  if (deletedCount === 0) return { ok: false, status: 404, error: "Account not found." };
+  // The owner's own activity history belongs to the account and goes with it.
+  await deleteActivityFor(targetId);
+
+  const restaurants = await restaurantsCollection();
+  const run = await restaurants.find({ managerId: targetId }).toArray();
+  for (const r of run) {
+    await restaurants.updateOne({ _id: r._id, managerId: targetId }, { $set: { managerId: null } });
+  }
+
+  const vacated = run.map((r) => r.name);
+  await logActivity(
+    actor.id,
+    actor,
+    "Owner deleted",
+    `${target.name} (${target.email})${vacated.length ? `. ${vacated.join(", ")} now has no owner.` : "."}`,
+  );
+  return { ok: true, deleted: { id: target._id, name: target.name, email: target.email }, vacatedRestaurants: vacated };
 }
 
 export type StaffUpdateResult = { ok: true; member: StaffMember } | { ok: false; status: number; error: string };
