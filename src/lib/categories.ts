@@ -56,7 +56,7 @@ export function cacheCategories(categories: StoredCategory[]): boolean {
   return saved;
 }
 
-// Admin save: updates this browser straight away, then stores the full list in MongoDB.
+// Admin save: updates this browser straight away, then stores the full list in the local store.
 export function saveCategories(categories: StoredCategory[]): boolean {
   const saved = cacheCategories(categories);
   void saveCatalogList("/api/admin/categories", { categories });

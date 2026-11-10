@@ -22,7 +22,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// Accounts and sessions live on the server (MongoDB). This provider only keeps the signed-in
+// Accounts and sessions live in this browser's local store. This provider only keeps the signed-in
 // user in memory, so pages can show the right state.
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined);

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { CustomerOrders } from "@/components/customer/CustomerOrders";
 
 export const metadata: Metadata = {
-  title: "My orders | MEG Pakistan",
+  title: "My orders | Restaurant Management System",
 };
 
 export default function AccountOrdersPage() {

@@ -7,7 +7,7 @@ import { formatPKR } from "@/lib/format";
 import { inputClass } from "@/components/ui/FormField";
 import type { AuthUser, Order } from "@/types";
 
-// Registered customers come from the server (MongoDB); orders come from the shared orders store.
+// Registered customers come from this browser's customer store; orders come from the shared orders store.
 interface RegisteredState {
   users: AuthUser[];
   failed: boolean;

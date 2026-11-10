@@ -40,7 +40,10 @@ function estimateFor(order: Order): { label: string; value: string } {
 }
 
 export function CustomerOrderDetail({ id }: { id: string }) {
-  const { data, error, loading, reload } = useCustomerData<{ order: Order }>(`/api/orders/${encodeURIComponent(id)}`);
+  const { data, error, loading, reload } = useCustomerData<{ order: Order }>(`/api/orders/${encodeURIComponent(id)}`, {
+    intervalMs: 20_000,
+    while: ({ order }) => !isCancelled(order) && !isDelivered(order),
+  });
   const { reorder, pendingOrderId, notice } = useReorder();
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);

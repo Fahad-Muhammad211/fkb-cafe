@@ -5,7 +5,7 @@
 export type AdminAuthErrors = Record<string, string>;
 export type AdminAuthResult = { ok: true } | { ok: false; errors: AdminAuthErrors };
 
-const UNREACHABLE: AdminAuthResult = { ok: false, errors: { form: "Could not reach the server. Check your connection and try again." } };
+const UNREACHABLE: AdminAuthResult = { ok: false, errors: { form: "Could not complete this request in this browser. Reload the page and try again." } };
 
 // Reads the shared error shape { error, errors? } and maps it to form errors.
 async function send(url: string, method: "POST" | "DELETE", body?: unknown): Promise<AdminAuthResult> {

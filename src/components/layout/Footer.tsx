@@ -18,7 +18,7 @@ export function Footer() {
       <Reveal className="mx-auto grid max-w-[1260px] gap-10 px-4 py-12 sm:grid-cols-2 lg:grid-cols-4 lg:px-0">
         <div className="flex flex-col gap-4">
           <span className="flex h-16 w-16 items-center justify-center rounded-full bg-black font-serif text-xl font-black text-white ring-1 ring-zinc-800">
-            MEG
+            RMS
           </span>
           <div>
             <p className="font-bold text-white">{SITE.name}</p>

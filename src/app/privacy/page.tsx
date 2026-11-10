@@ -3,7 +3,7 @@ import { PageFrame } from "@/components/layout/PageFrame";
 import { CONTACT_EMAIL, SITE } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | MEG Pakistan",
+  title: "Privacy Policy | Restaurant Management System",
 };
 
 const SECTIONS = [

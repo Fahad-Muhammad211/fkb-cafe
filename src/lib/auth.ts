@@ -6,7 +6,7 @@ import type { AuthUser } from "@/types";
 export type AuthErrors = Record<string, string>;
 export type AuthResult = { ok: true; user: AuthUser } | { ok: false; errors: AuthErrors };
 
-const UNREACHABLE: AuthResult = { ok: false, errors: { form: "Could not reach the server. Check your connection and try again." } };
+const UNREACHABLE: AuthResult = { ok: false, errors: { form: "Could not complete this request in this browser. Reload the page and try again." } };
 
 async function send(url: string, method: "POST" | "PATCH", body?: unknown): Promise<AuthResult> {
   try {

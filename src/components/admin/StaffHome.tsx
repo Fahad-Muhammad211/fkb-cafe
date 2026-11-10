@@ -15,6 +15,8 @@ const DESCRIPTIONS: Record<string, string> = {
   "/admin/orders": "Confirm orders, move them along and cancel when needed.",
   "/admin/customers": "Look up registered customers and their details.",
   "/admin/products": "Update the menu, prices, photos and availability.",
+  "/admin/offices": "Create the offices that managers are assigned to.",
+  "/admin/restaurants": "Open each restaurant's orders, staff, stock, purchases, attendance and riders.",
 };
 
 export function StaffHome({ name, role, responsibilities }: { name: string; role: StaffRole; responsibilities: Responsibility[] }) {

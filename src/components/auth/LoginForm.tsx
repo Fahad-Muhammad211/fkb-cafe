@@ -94,7 +94,7 @@ export function LoginForm() {
         </button>
 
         <p className="text-center text-sm text-zinc-400">
-          New to MEG?{" "}
+          New to Restaurant Management System?{" "}
           <Link href="/signup" className="font-semibold text-white underline-offset-4 hover:underline">
             Create an account
           </Link>

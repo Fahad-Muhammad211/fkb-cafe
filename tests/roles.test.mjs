@@ -24,15 +24,30 @@ async function hashFor(password) {
   return `scrypt$${salt.toString("hex")}$${(await scrypt(password, salt)).toString("hex")}`;
 }
 
+// The Add Employee form sends a role and an office, and every new manager gets all areas. The owner then
+// narrows the areas through the employees API, as the tests need one area per manager.
 async function createManager(ownerCookie, areas, name = "Staff Member") {
   const email = randomGmail();
   const res = await json("POST", `${base}/api/admin/accounts`, {
     cookie: ownerCookie,
-    body: { name, email, password: TEST_PASSWORD, confirm: TEST_PASSWORD, responsibilities: areas },
+    body: { name, email, password: TEST_PASSWORD, confirm: TEST_PASSWORD, role: "manager", officeId: await officeId(ownerCookie) },
   });
   assert.equal(res.status, 201, `create manager: ${res.text}`);
   assert.equal(cookieFrom(res.res, "meg_admin_session"), null, "creating a manager must not switch the owner's session");
+  const narrowed = await json("PATCH", `${base}/api/admin/employees/${res.data.account.id}`, { cookie: ownerCookie, body: { responsibilities: areas } });
+  assert.equal(narrowed.status, 200, `set areas: ${narrowed.text}`);
   return { email, id: res.data.account.id, cookie: await login(email) };
+}
+
+// One office shared by the test managers, created through the Offices API the way the owner would.
+let sharedOfficeId = null;
+async function officeId(ownerCookie) {
+  if (!sharedOfficeId) {
+    const res = await json("POST", `${base}/api/admin/offices`, { cookie: ownerCookie, body: { name: "Test Office", address: "1 Test Street" } });
+    assert.equal(res.status, 201, `create office: ${res.text}`);
+    sharedOfficeId = res.data.office.id;
+  }
+  return sharedOfficeId;
 }
 
 async function login(email) {
@@ -107,16 +122,66 @@ describe("owner access", () => {
     assert.equal((await fetch(`${base}/admin/employees`, { headers: { cookie: owner.cookie }, redirect: "manual" })).status, 200);
   });
 
-  test("invalid manager areas are refused", async () => {
-    const none = await json("POST", `${base}/api/admin/accounts`, { cookie: owner.cookie, body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, responsibilities: [] } });
-    assert.equal(none.status, 400);
-    assert.ok(none.data.errors.responsibilities);
+  test("a manager is created with the role and office chosen in the form", async () => {
+    const office = await officeId(owner.cookie);
+    const res = await json("POST", `${base}/api/admin/accounts`, {
+      cookie: owner.cookie,
+      body: { name: "Office Manager", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, role: "manager", officeId: office },
+    });
+    assert.equal(res.status, 201, res.text);
+    assert.equal(res.data.account.role, "manager");
+    assert.equal(res.data.account.officeId, office);
+    assert.equal(res.data.account.officeName, "Test Office");
+    assert.equal(res.data.account.responsibilities.join(), "orders,menu,customers", "a new manager gets every area");
 
-    const finance = await json("POST", `${base}/api/admin/accounts`, { cookie: owner.cookie, body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, responsibilities: ["finance"] } });
-    assert.equal(finance.status, 400, "finance cannot be given to a manager");
+    const listed = (await json("GET", `${base}/api/admin/employees`, { cookie: owner.cookie })).data.staff.find((s) => s.id === res.data.account.id);
+    assert.equal(listed.role, "manager", "the saved role is shown in the employees list");
+    assert.equal(listed.officeName, "Test Office", "the saved office is shown in the employees list");
+  });
 
-    const repeated = await json("POST", `${base}/api/admin/accounts`, { cookie: owner.cookie, body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, responsibilities: ["orders", "orders"] } });
-    assert.equal(repeated.status, 400);
+  test("a role the owner cannot assign is refused, and so is a missing role", async () => {
+    const missing = await json("POST", `${base}/api/admin/accounts`, {
+      cookie: owner.cookie,
+      body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, officeId: await officeId(owner.cookie) },
+    });
+    assert.equal(missing.status, 400);
+    assert.ok(missing.data.errors.role);
+
+    const ownerRole = await json("POST", `${base}/api/admin/accounts`, {
+      cookie: owner.cookie,
+      body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, role: "owner", officeId: await officeId(owner.cookie) },
+    });
+    assert.equal(ownerRole.status, 400, "a second owner cannot be created from the form");
+    assert.ok(ownerRole.data.errors.role);
+  });
+
+  test("a manager needs an office that exists", async () => {
+    const noOffice = await json("POST", `${base}/api/admin/accounts`, {
+      cookie: owner.cookie,
+      body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, role: "manager" },
+    });
+    assert.equal(noOffice.status, 400);
+    assert.ok(noOffice.data.errors.officeId);
+
+    const unknown = await json("POST", `${base}/api/admin/accounts`, {
+      cookie: owner.cookie,
+      body: { name: "Nobody", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, role: "manager", officeId: "office-does-not-exist" },
+    });
+    assert.equal(unknown.status, 400);
+    assert.ok(unknown.data.errors.officeId);
+  });
+
+  test("the owner can move a manager to another office", async () => {
+    const created = await json("POST", `${base}/api/admin/accounts`, {
+      cookie: owner.cookie,
+      body: { name: "Mover", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD, role: "manager", officeId: await officeId(owner.cookie) },
+    });
+    assert.equal(created.status, 201, created.text);
+    const second = await json("POST", `${base}/api/admin/offices`, { cookie: owner.cookie, body: { name: "Second Office", address: "" } });
+    assert.equal(second.status, 201, second.text);
+    const moved = await json("PATCH", `${base}/api/admin/employees/${created.data.account.id}`, { cookie: owner.cookie, body: { officeId: second.data.office.id } });
+    assert.equal(moved.status, 200, moved.text);
+    assert.equal(moved.data.member.officeName, "Second Office");
   });
 
   test("owner accounts cannot be edited through the employees API", async () => {

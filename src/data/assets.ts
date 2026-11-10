@@ -87,6 +87,6 @@ export const CITY_IMAGES: Record<string, string> = {
 
 // Printed menu pages, shown in the "View full menu" window.
 export const MENU_PAGES = [
-  { src: "/images/menu/menu-page-1.webp", alt: "MEG menu page 1: Main Eats, Light Eats, Wraps and meal add-ons", width: 638, height: 800 },
-  { src: "/images/menu/menu-page-2.webp", alt: "MEG menu page 2: Fries, Pasta, Iced Blends, Hot Beverages, Sweet Treats, Cheers and MEG Dips", width: 638, height: 800 },
+  { src: "/images/menu/menu-page-1.webp", alt: "Menu page 1: Main Eats, Light Eats, Wraps and meal add-ons", width: 638, height: 800 },
+  { src: "/images/menu/menu-page-2.webp", alt: "Menu page 2: Fries, Pasta, Iced Blends, Hot Beverages, Sweet Treats, Cheers and MEG Dips", width: 638, height: 800 },
 ];

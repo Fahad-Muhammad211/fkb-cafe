@@ -6,6 +6,7 @@ import { DELIVERY_FEE } from "@/lib/constants";
 import { LOCATION_KEY, parseLocation, saveLocation } from "@/lib/location";
 import { formatPKR } from "@/lib/format";
 import { createClientOrderId, placeOrder } from "@/lib/orders";
+import { useCustomerData } from "@/components/customer/useCustomerData";
 import { validateCheckout, type CheckoutErrors } from "@/lib/validation";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
 import { useCart } from "@/context/CartContext";
@@ -47,6 +48,10 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
   // One reference per checkout attempt: a retry sends the same id, so the server never creates two orders.
   const [clientOrderId] = useState(createClientOrderId);
   const [formError, setFormError] = useState<string | null>(null);
+  // The restaurant the customer orders from. Shown once any restaurant exists.
+  const restaurantsState = useCustomerData<{ restaurants: { id: string; name: string; area: string }[] }>("/api/restaurants");
+  const restaurants = restaurantsState.data?.restaurants ?? [];
+  const [restaurantId, setRestaurantId] = useState("");
 
   // Errors only appear after the first submit attempt, then update live as the user types.
   const errors: CheckoutErrors = submitted ? validateCheckout(values) : {};
@@ -70,6 +75,12 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
       return;
     }
 
+    if (restaurants.length > 0 && !restaurantId) {
+      setFormError("Choose the restaurant you are ordering from.");
+      document.getElementById("checkout-restaurant")?.focus();
+      return;
+    }
+
     setPlacing(true);
     // The server checks the cart against the menu, sets the totals and assigns the order number.
     placeOrder({
@@ -82,6 +93,7 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
       },
       fulfilment: values.fulfilment,
       lines,
+      restaurantId: restaurantId || undefined,
     }).then((result) => {
       if (!result.ok) {
         setPlacing(false);
@@ -136,6 +148,20 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
             </FormField>
           </div>
         </section>
+
+        {restaurants.length > 0 && (
+          <section aria-labelledby="restaurant-heading" className="flex flex-col gap-4">
+            <h2 id="restaurant-heading" className="text-lg font-bold">Restaurant</h2>
+            <select id="checkout-restaurant" value={restaurantId} onChange={(e) => setRestaurantId(e.target.value)} className={inputClass}>
+              <option value="">Choose a restaurant</option>
+              {restaurants.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} · {r.area}
+                </option>
+              ))}
+            </select>
+          </section>
+        )}
 
         {/* Fulfilment */}
         <section aria-labelledby="fulfilment-heading" className="flex flex-col gap-4">

@@ -5,7 +5,7 @@ import Image from "next/image";
 import { X } from "lucide-react";
 import { MENU_PAGES } from "@/data/assets";
 
-// Shows the printed MEG menu pages in a scrollable window.
+// Shows the printed menu pages in a scrollable window.
 export function MenuPagesDialog({ onClose }: { onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
@@ -37,7 +37,7 @@ export function MenuPagesDialog({ onClose }: { onClose: () => void }) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Full MEG menu"
+        aria-label="Full menu"
         className="animate-modal-in relative flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl bg-zinc-900 sm:rounded-3xl"
       >
         <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">

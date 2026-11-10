@@ -5,7 +5,7 @@ import { PageFrame } from "@/components/layout/PageFrame";
 import { CONTACT_EMAIL, CONTACT_PHONE, DELIVERY_FEE, DELIVERY_HOURS } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "FAQs | MEG Pakistan",
+  title: "FAQs | Restaurant Management System",
 };
 
 const FAQS = [

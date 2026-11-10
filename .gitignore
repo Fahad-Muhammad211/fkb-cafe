@@ -46,3 +46,6 @@ next-env.d.ts
 
 # Stray root-level logs from local tooling (never commit)
 /*.log
+
+# Local AI-assistant workspace data (never commit)
+/.refact/

@@ -4,7 +4,7 @@ import { PageFrame } from "@/components/layout/PageFrame";
 import { OrderDetail } from "@/components/orders/OrderDetail";
 
 export const metadata: Metadata = {
-  title: "Track order | MEG Pakistan",
+  title: "Track order | Restaurant Management System",
 };
 
 // Route params are only known at request time, so they are read inside Suspense

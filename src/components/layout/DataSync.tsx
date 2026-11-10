@@ -11,7 +11,7 @@ import { cacheProducts } from "@/lib/products";
 const ORDERS_REFRESH_MS = 15_000;
 const CATALOG_REFRESH_MS = 60_000;
 
-// Keeps this browser's copy of the menu and orders in step with the server (MongoDB). The menu
+// Keeps this browser's copy of the menu and orders in step with the local store. The menu
 // reloads on a timer and on each page change. Orders reload on each page change and every few
 // seconds, so an admin's change shows on the customer's screen and a new order shows on the
 // dashboard. A failed request leaves the saved copy in place.

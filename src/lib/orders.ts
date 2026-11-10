@@ -4,7 +4,7 @@ import type { CartLine, Order } from "@/types";
 export const ORDERS_STORAGE_KEY = "meg-orders-v1";
 
 // Shared store so the history and detail views update when an order changes.
-// Orders are kept in MongoDB; this list is a copy for this browser.
+// Orders are kept in the local store; this list is a copy for this browser.
 export const ordersStore = createStorageStore(ORDERS_STORAGE_KEY);
 
 export function parseOrders(raw: string | null | undefined): Order[] {
@@ -65,7 +65,7 @@ async function orderRequest(url: string, method: "POST" | "PATCH", body?: unknow
     }
     return { ok: false, error: data?.error ?? "Something went wrong. Please try again.", errors: data?.errors };
   } catch {
-    return { ok: false, error: "Could not reach the server. Check your connection and try again." };
+    return { ok: false, error: "Could not load or save data in this browser. Reload the page and try again." };
   }
 }
 
@@ -75,6 +75,7 @@ export function placeOrder(draft: {
   customer: Order["customer"];
   fulfilment: Order["fulfilment"];
   lines: CartLine[];
+  restaurantId?: string;
 }): Promise<OrderActionResult> {
   return orderRequest("/api/orders", "POST", draft);
 }

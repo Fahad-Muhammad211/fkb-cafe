@@ -24,7 +24,7 @@ export function CustomerOverview() {
       <PageHeader
         eyebrow="Customer dashboard"
         title={`Welcome back, ${firstName}`}
-        description="Track your orders, manage your details and see what's new at MEG Pakistan."
+        description="Track your orders, manage your details and see what's new at Restaurant Management System."
         action={
           <Link href="/" className={primaryButton}>
             <UtensilsCrossed className="h-4 w-4" aria-hidden="true" />

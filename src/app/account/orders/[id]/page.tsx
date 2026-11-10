@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { CustomerOrderDetail } from "@/components/customer/CustomerOrderDetail";
 
 export const metadata: Metadata = {
-  title: "Order tracking | MEG Pakistan",
+  title: "Order tracking | Restaurant Management System",
   robots: { index: false, follow: false },
 };
 

@@ -28,7 +28,7 @@ function AuthFrame({ title, subtitle, children, footer }: { title: string; subti
         <div className="w-full max-w-md animate-card-in">
           <div className="mb-6 flex flex-col items-center gap-3 text-center">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-black font-serif text-xl font-black ring-1 ring-zinc-700">
-              MEG
+              RMS
             </span>
             <h1 className="text-3xl font-black uppercase tracking-tight">{title}</h1>
             <p className="text-sm text-zinc-400">{subtitle}</p>

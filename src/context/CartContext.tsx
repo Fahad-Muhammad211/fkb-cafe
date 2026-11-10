@@ -113,7 +113,7 @@ function writeLocalCart(lines: CartLine[]) {
   listeners.forEach((listener) => listener());
 }
 
-// The signed-in customer whose cart is saved to MongoDB; null for guests.
+// The signed-in customer whose cart is saved in the local store; null for guests.
 let cartOwnerId: string | null = null;
 
 // Applies an update to the latest saved cart, persists it in the browser and, for a signed-in

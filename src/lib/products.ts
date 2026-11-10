@@ -33,7 +33,7 @@ export function cacheProducts(products: MenuItem[]): boolean {
   return saved;
 }
 
-// Admin save: updates this browser straight away, then stores the full list in MongoDB.
+// Admin save: updates this browser straight away, then stores the full list in the local store.
 export function saveProducts(products: MenuItem[]): boolean {
   const saved = cacheProducts(products);
   void saveCatalogList("/api/admin/products", { products });

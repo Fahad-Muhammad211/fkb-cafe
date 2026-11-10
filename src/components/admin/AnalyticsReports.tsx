@@ -70,8 +70,8 @@ export function AnalyticsReports() {
   };
 
   const exportSummary = () =>
-    downloadCsv(`meg-sales-${period}-${range.from}-to-${range.to}.csv`, summaryCsv(buckets, period));
-  const exportOrders = () => downloadCsv(`meg-orders-${range.from}-to-${range.to}.csv`, ordersCsv(ordersInRange(orders, range, true)));
+    downloadCsv(`rms-sales-${period}-${range.from}-to-${range.to}.csv`, summaryCsv(buckets, period));
+  const exportOrders = () => downloadCsv(`rms-orders-${range.from}-to-${range.to}.csv`, ordersCsv(ordersInRange(orders, range, true)));
 
   const kpis = [
     { label: "Revenue", value: formatPKR(summary.revenue), icon: TrendingUp },

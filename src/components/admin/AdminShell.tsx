@@ -3,7 +3,7 @@
 import { Suspense, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, ClipboardList, LayoutDashboard, LogOut, Menu, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, Building2, ClipboardList, LayoutDashboard, LogOut, Menu, Store, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
 import { adminLogoutRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
 import { SECTIONS, canAccess, type Responsibility, type StaffRole } from "@/lib/permissions";
@@ -16,6 +16,8 @@ const ICONS: Record<string, LucideIcon> = {
   "/admin/products": UtensilsCrossed,
   "/admin/analytics": Activity,
   "/admin/employees": UserCog,
+  "/admin/offices": Building2,
+  "/admin/restaurants": Store,
 };
 
 // The signed-in staff member, as read on the server. Used only to decide which links to draw.
@@ -42,7 +44,7 @@ function Brand({ session }: { session: ShellSession }) {
   return (
     <div className="flex items-center gap-3 px-4 py-5">
       <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black font-serif text-sm font-black text-white ring-1 ring-orange-500/40">
-        MEG
+        RMS
       </span>
       <div className="min-w-0">
         <p className="truncate font-bold leading-tight">{session.name}</p>
@@ -112,7 +114,7 @@ function Sidebar({ session }: { session: ShellSession }) {
 
       {/* Mobile top bar */}
       <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900/95 px-4 backdrop-blur lg:hidden">
-        <p className="font-bold">MEG Admin</p>
+        <p className="font-bold">Restaurant Management System</p>
         <button
           type="button"
           onClick={() => setOpen(true)}

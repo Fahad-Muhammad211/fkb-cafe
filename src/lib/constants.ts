@@ -1,6 +1,6 @@
 export const SITE = {
-  name: "MEG Pakistan",
-  description: "Order premium burgers, wraps, fries and more from MEG Pakistan for delivery or pick-up.",
+  name: "Restaurant Management System",
+  description: "Order food from Restaurant Management System for delivery or pick-up.",
   url: "https://megpakistan.com",
 } as const;
 

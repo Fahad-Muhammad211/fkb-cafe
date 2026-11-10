@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { CustomerSupport } from "@/components/customer/CustomerSupport";
 
 export const metadata: Metadata = {
-  title: "Customer support | MEG Pakistan",
+  title: "Customer support | Restaurant Management System",
 };
 
 // "?order=MEG-123456" pre-selects that order in the complaint form (see the order detail page).

@@ -3,7 +3,7 @@ import { PageFrame } from "@/components/layout/PageFrame";
 import { LoginForm } from "@/components/auth/LoginForm";
 
 export const metadata: Metadata = {
-  title: "Log in | MEG Pakistan",
+  title: "Log in | Restaurant Management System",
 };
 
 export default function LoginPage() {

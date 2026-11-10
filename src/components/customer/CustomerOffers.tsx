@@ -33,7 +33,7 @@ export function CustomerOffers() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Rewards" title="Offers & coupons" description="Active discount codes from MEG Pakistan." />
+      <PageHeader eyebrow="Rewards" title="Offers & coupons" description="Active discount codes from Restaurant Management System." />
 
       {loading && <LoadingBlock label="Loading offers…" />}
       {error && <ErrorNote message={error} onRetry={reload} />}

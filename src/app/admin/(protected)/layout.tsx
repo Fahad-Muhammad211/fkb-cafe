@@ -1,28 +1,19 @@
-import { Suspense, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Metadata } from "next";
-import { connection } from "next/server";
-import { redirect } from "next/navigation";
-import { AdminShell } from "@/components/admin/AdminShell";
-import { getAdminSession } from "@/lib/server/adminSession";
+import { AdminGuard } from "@/components/auth/SessionGates";
 
 export const metadata: Metadata = {
-  title: "Admin | MEG Pakistan",
+  title: "Admin | Restaurant Management System",
   robots: { index: false, follow: false },
 };
 
-// Server-side guard: signed-out requests never reach the dashboard pages.
-async function AdminGuard({ children }: { children: ReactNode }) {
-  // The admin area is per-visitor and time-sensitive, so render it at request time.
-  await connection();
-  const session = await getAdminSession();
-  if (!session) redirect("/admin/login");
-  return <AdminShell session={{ name: session.name, role: session.role, responsibilities: session.responsibilities }}>{children}</AdminShell>;
-}
+// Every admin page reads the signed-in session from this browser's localStorage, so none of them can
+// render a static shell on the server. Opting the layout out of instant-navigation validation (which
+// otherwise reports each admin page as a "dropped segment" in development) is the documented way to
+// mark that. It applies to every page below this layout.
+export const instant = false;
 
+// Guard: signed-out visitors never reach the dashboard pages.
 export default function ProtectedAdminLayout({ children }: { children: ReactNode }) {
-  return (
-    <Suspense fallback={<div className="flex min-h-dvh items-center justify-center bg-zinc-950 text-sm text-zinc-400">Checking admin session…</div>}>
-      <AdminGuard>{children}</AdminGuard>
-    </Suspense>
-  );
+  return <AdminGuard>{children}</AdminGuard>;
 }

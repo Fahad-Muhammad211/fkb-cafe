@@ -24,7 +24,7 @@ export function Logo({ className }: LogoProps) {
         <Image src={SITE_ASSETS.logo} alt="" fill sizes="96px" className="rounded-full object-cover" priority />
       ) : (
         <span className="font-serif text-sm font-black tracking-tight text-white sm:text-base md:text-2xl lg:text-3xl">
-          MEG
+          RMS
         </span>
       )}
     </Link>

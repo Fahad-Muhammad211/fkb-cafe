@@ -110,6 +110,11 @@ export interface Order {
   // Index into ORDER_STEPS for the fulfilment progress. Set by an admin once the order is confirmed.
   statusOverride?: number;
   history?: OrderEvent[];
+  // The restaurant the customer chose at checkout. Missing on orders placed before restaurants existed.
+  restaurantId?: string;
+  restaurantName?: string;
+  // The rider assigned to deliver this order, or null when none is assigned.
+  riderId?: string | null;
 }
 
 export interface AuthUser {

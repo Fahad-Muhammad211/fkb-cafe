@@ -3,7 +3,7 @@ import { PageFrame } from "@/components/layout/PageFrame";
 import { SignupForm } from "@/components/auth/SignupForm";
 
 export const metadata: Metadata = {
-  title: "Create account | MEG Pakistan",
+  title: "Create account | Restaurant Management System",
 };
 
 export default function SignupPage() {

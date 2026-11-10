@@ -148,7 +148,7 @@ function LocationDialog({ saved, onClose }: { saved: ReturnType<typeof parseLoca
         </button>
 
         <div className="flex justify-center border-b border-zinc-800 px-6 py-5">
-          <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-black font-serif text-xl font-black ring-1 ring-zinc-700">MEG</span>
+          <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-black font-serif text-xl font-black ring-1 ring-zinc-700">RMS</span>
         </div>
 
         <div className="flex flex-col items-center gap-5 px-6 py-6 text-center">
