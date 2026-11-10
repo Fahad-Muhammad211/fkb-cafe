@@ -1,6 +1,6 @@
 import { OfficesGate } from "@/components/admin/OfficesView";
 
-// Owner only. Managers are assigned to the offices created here.
+// Owner page. Owners added from the Employees page are assigned to the offices created here.
 // Session-dependent admin page; see the note in (protected)/layout.tsx.
 export const instant = false;
 

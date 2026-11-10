@@ -2,16 +2,17 @@ import { randomHex } from "@/lib/local/random";
 import { isValidName, isValidPassword } from "@/lib/validation";
 import { getCollection, isDuplicateKeyError } from "@/lib/local/collections";
 import { hashPassword, passwordMatches } from "@/lib/local/passwords";
-import { DEFAULT_MANAGER_RESPONSIBILITIES, parseAssignableRole, parseResponsibilities, RESPONSIBILITY_LABELS, type Responsibility, type StaffRole } from "@/lib/permissions";
+import type { StaffRole } from "@/lib/permissions";
 import { findOffice } from "@/lib/local/offices";
 import { logActivity, type Actor } from "@/lib/local/activity";
 
 // Admin accounts live in the "admins" collection. Passwords are hashed with scrypt and never
 // sent back to the browser or written in plain text.
 //
-// Roles: "owner" or "manager". Documents saved before roles existed have no role field; they are
-// read as active owners, so the original admin account keeps full access without a migration.
-// Managers are assigned to one office; the office ID and name are saved on their record.
+// Every account is an owner. Documents saved before roles existed have no role field, and documents
+// saved with the old "manager" role are read as owners too; migrateManagerAccounts() rewrites those
+// stored "manager" roles to "owner". Owners added from the Employees page are assigned to one office;
+// the office ID and name are saved on their record.
 
 export interface AdminAccount {
   id: string;
@@ -20,7 +21,6 @@ export interface AdminAccount {
   passwordHash: string;
   createdAt: string;
   role: StaffRole;
-  responsibilities: Responsibility[];
   active: boolean;
   officeId: string | null;
   officeName: string | null;
@@ -31,7 +31,6 @@ export interface StaffMember {
   name: string;
   email: string;
   role: StaffRole;
-  responsibilities: Responsibility[];
   active: boolean;
   createdAt: string;
   officeId: string | null;
@@ -44,8 +43,8 @@ type AdminDoc = {
   email: string;
   passwordHash: string;
   createdAt: string;
-  role?: StaffRole;
-  responsibilities?: Responsibility[];
+  // "manager" is only found on records saved before the single owner role.
+  role?: StaffRole | "manager";
   active?: boolean;
   createdBy?: string;
   officeId?: string;
@@ -66,8 +65,7 @@ const toAccount = (doc: AdminDoc): AdminAccount => ({
   email: doc.email,
   passwordHash: doc.passwordHash,
   createdAt: doc.createdAt,
-  role: doc.role ?? "owner",
-  responsibilities: doc.responsibilities ?? [],
+  role: "owner",
   active: doc.active !== false,
   officeId: doc.officeId ?? null,
   officeName: doc.officeName ?? null,
@@ -80,7 +78,6 @@ const toStaffMember = (doc: AdminDoc): StaffMember => {
     name: account.name,
     email: account.email,
     role: account.role,
-    responsibilities: account.responsibilities,
     active: account.active,
     createdAt: account.createdAt,
     officeId: account.officeId,
@@ -108,7 +105,7 @@ export function validateAdminSignup(input: { name: string; email: string; passwo
 type NewAdminInput = { name: string; email: string; password: string; confirm: string };
 
 export type AdminCreateResult =
-  | { ok: true; account: Pick<AdminAccount, "id" | "name" | "email" | "role" | "responsibilities" | "officeId" | "officeName"> }
+  | { ok: true; account: Pick<AdminAccount, "id" | "name" | "email" | "role" | "officeId" | "officeName"> }
   | { ok: false; errors: AccountErrors }
   | { ok: false; closed: true };
 
@@ -121,10 +118,21 @@ export async function hasAdminAccounts(): Promise<boolean> {
   return (await (await adminsCollection()).findOne({}, { projection: { _id: 1 } })) !== null;
 }
 
+// Rewrites accounts stored with the old "manager" role as owners. Every other field (name, email,
+// password, office, status) is kept. Safe to run more than once.
+export async function migrateManagerAccounts(): Promise<number> {
+  const collection = await adminsCollection();
+  const managers = await collection.find({ role: "manager" }).toArray();
+  for (const doc of managers) {
+    await collection.updateOne({ _id: doc._id }, { $set: { role: "owner" } });
+  }
+  return managers.length;
+}
+
 async function insertAdmin(
   input: NewAdminInput,
   id: string,
-  access: { role: StaffRole; responsibilities: Responsibility[]; createdBy?: string; office?: { id: string; name: string } },
+  access: { createdBy?: string; office?: { id: string; name: string } },
 ): Promise<AdminCreateResult> {
   const doc: AdminDoc = {
     _id: id,
@@ -132,8 +140,7 @@ async function insertAdmin(
     email: normaliseEmail(input.email),
     passwordHash: await hashPassword(input.password),
     createdAt: new Date().toISOString(),
-    role: access.role,
-    responsibilities: access.responsibilities,
+    role: "owner",
     active: true,
     ...(access.createdBy ? { createdBy: access.createdBy } : {}),
     ...(access.office ? { officeId: access.office.id, officeName: access.office.name } : {}),
@@ -156,47 +163,37 @@ async function insertAdmin(
       id: doc._id,
       name: doc.name,
       email: doc.email,
-      role: access.role,
-      responsibilities: access.responsibilities,
+      role: "owner",
       officeId: access.office?.id ?? null,
       officeName: access.office?.name ?? null,
     },
   };
 }
 
-// Creates the first admin, who is the owner. Refused once any admin exists, and only one of several racing requests can win.
+// Creates the first admin, who is an owner. Refused once any admin exists, and only one of several racing requests can win.
 export async function createInitialAdminAccount(input: NewAdminInput): Promise<AdminCreateResult> {
   if (await hasAdminAccounts()) return { ok: false, closed: true };
   const errors = validateAdminSignup(input);
   if (Object.keys(errors).length > 0) return { ok: false, errors };
-  return insertAdmin(input, INITIAL_ADMIN_ID, { role: "owner", responsibilities: [] });
+  return insertAdmin(input, INITIAL_ADMIN_ID, {});
 }
 
-// Creates a staff account with the role the owner chose from the Employees dropdown and the office they picked.
-// The role must be one listed in ASSIGNABLE_ROLES. The caller must be an owner; the route checks that.
+// Creates another owner account from the Employees page, at the office the signed-in owner picked.
+// The caller must be signed in as an owner; the route checks that.
 // The office must already exist in the Offices list; the office name is saved with the account.
-export async function createManagerAccount(
-  input: NewAdminInput,
-  role: unknown,
-  officeId: unknown,
-  creator: Actor,
-): Promise<AdminCreateResult> {
+export async function createOwnerAccount(input: NewAdminInput, officeId: unknown, creator: Actor): Promise<AdminCreateResult> {
   const errors = validateAdminSignup(input);
-  const accountRole = parseAssignableRole(role);
-  if (!accountRole) errors.role = "Choose a role.";
   const office = typeof officeId === "string" && officeId ? await findOffice(officeId) : null;
-  if (!office) errors.officeId = "Choose the office this manager works at.";
-  if (Object.keys(errors).length > 0 || !accountRole || !office) return { ok: false, errors };
+  if (!office) errors.officeId = "Choose the office this owner works at.";
+  if (Object.keys(errors).length > 0 || !office) return { ok: false, errors };
 
   const id = `admin-${Date.now().toString(36)}-${randomHex(3)}`;
   const result = await insertAdmin(input, id, {
-    role: accountRole,
-    responsibilities: [...DEFAULT_MANAGER_RESPONSIBILITIES],
     createdBy: creator.id,
     office: { id: office.id, name: office.name },
   });
   if (result.ok) {
-    await logActivity(id, creator, "Manager added", `Office: ${office.name}.`);
+    await logActivity(id, creator, "Owner added", `Office: ${office.name}.`);
   }
   return result;
 }
@@ -215,35 +212,26 @@ export async function findAdminAccount(id: string): Promise<AdminAccount | null>
   return doc ? toAccount(doc) : null;
 }
 
-// Every staff account, owners first, then managers by creation date.
+// Every owner account, oldest first.
 export async function listStaff(): Promise<StaffMember[]> {
   const docs = await (await adminsCollection()).find({}).sort({ createdAt: 1 }).limit(200).toArray();
-  return docs
-    .map(toStaffMember)
-    .sort((a, b) => (a.role === b.role ? 0 : a.role === "owner" ? -1 : 1));
+  return docs.map(toStaffMember);
 }
 
 export type StaffUpdateResult = { ok: true; member: StaffMember } | { ok: false; status: number; error: string };
 
-// Changes a manager's areas, office, or switches them on and off. Owners cannot be edited here, and an
-// owner cannot switch off their own account. Each change is written to the manager's activity history.
+// Changes an owner's office, or switches them on and off. An owner cannot switch off their own account.
+// Each change is written to that owner's activity history.
 export async function updateStaff(
   targetId: string,
   actor: Actor,
-  changes: { responsibilities?: unknown; active?: unknown; officeId?: unknown },
+  changes: { active?: unknown; officeId?: unknown },
 ): Promise<StaffUpdateResult> {
   const collection = await adminsCollection();
   const target = await collection.findOne({ _id: targetId });
   if (!target) return { ok: false, status: 404, error: "Account not found." };
-  if ((target.role ?? "owner") === "owner") return { ok: false, status: 403, error: "Owner accounts cannot be changed here." };
 
   const $set: Partial<AdminDoc> = {};
-  let newAreas: Responsibility[] | null = null;
-  if (changes.responsibilities !== undefined) {
-    newAreas = parseResponsibilities(changes.responsibilities);
-    if (!newAreas) return { ok: false, status: 400, error: "Choose at least one area this manager can work on." };
-    $set.responsibilities = newAreas;
-  }
   if (changes.officeId !== undefined) {
     const office = typeof changes.officeId === "string" ? await findOffice(changes.officeId) : null;
     if (!office) return { ok: false, status: 400, error: "Choose a valid office." };
@@ -261,9 +249,6 @@ export async function updateStaff(
   if (!updated) return { ok: false, status: 404, error: "Account not found." };
   const member = toStaffMember(updated);
 
-  if (newAreas) {
-    await logActivity(targetId, actor, "Areas changed", newAreas.map((area) => RESPONSIBILITY_LABELS[area]).join(", "));
-  }
   if ($set.officeId !== undefined && $set.officeId !== target.officeId) {
     await logActivity(targetId, actor, "Office changed", `${target.officeName ?? "No office"} → ${member.officeName ?? ""}`);
   }

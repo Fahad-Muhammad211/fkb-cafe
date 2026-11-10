@@ -36,7 +36,7 @@ export function AdminGuard({ children }: { children: ReactNode }) {
   if (status.state !== "ready") return <Checking text="Checking admin session…" />;
   const session = status.value;
   return (
-    <AdminShell session={{ name: session.name, role: session.role, responsibilities: session.responsibilities }}>{children}</AdminShell>
+    <AdminShell session={{ name: session.name, role: session.role }}>{children}</AdminShell>
   );
 }
 

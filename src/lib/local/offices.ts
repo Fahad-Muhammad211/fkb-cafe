@@ -1,8 +1,8 @@
 import { getCollection, isDuplicateKeyError } from "@/lib/local/collections";
 import { randomHex } from "@/lib/local/random";
 
-// Offices are created by the owner in the admin dashboard. Each manager is assigned to one office,
-// and the office ID and name are saved with the manager record.
+// Offices are created by an owner in the admin dashboard. Each owner added from the Employees page is
+// assigned to one office, and the office ID and name are saved with that owner's record.
 
 export interface Office {
   id: string;

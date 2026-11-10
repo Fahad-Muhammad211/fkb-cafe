@@ -4,7 +4,7 @@
 
 import { readBody, apiError, json, text, clientKey } from "@/lib/local/http";
 import { createCustomer, verifyCustomer, changeCustomerPassword, listCustomers, updateCustomerProfile } from "@/lib/local/customers";
-import { createInitialAdminAccount, createManagerAccount, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/local/adminAccounts";
+import { createInitialAdminAccount, createOwnerAccount, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/local/adminAccounts";
 import { endAdminSession, getAdminSession, startAdminSession } from "@/lib/local/adminSession";
 import { endCustomerSession, getCustomerSession, startCustomerSession } from "@/lib/local/customerSession";
 import { checkStaff } from "@/lib/local/staff";
@@ -19,7 +19,7 @@ import { createTicket, listTickets } from "@/lib/local/support";
 import { assignRider, cancelOrder, confirmOrder, createOrder, getOrderForActor, listAllOrders, listOrdersForUser, setOrderProgress } from "@/lib/local/orders";
 import { currentActor } from "@/lib/local/actor";
 import { createOffice, listOffices } from "@/lib/local/offices";
-import { createTeamMember, getManagerDetails, updateTeamMember } from "@/lib/local/staffMembers";
+import { createTeamMember, getOwnerDetails, updateTeamMember } from "@/lib/local/staffMembers";
 import { createRestaurant, findRestaurant, listRestaurants, listRestaurantsForCustomers } from "@/lib/local/restaurants";
 import { addGroceryItem, updateGroceryItem, addPurchase, saveAttendance, addRider, updateRiderStatus, setRiderLocation } from "@/lib/local/restaurantRecords";
 import { getRestaurantDetail } from "@/lib/local/restaurantDetail";
@@ -431,17 +431,17 @@ const routes: Route[] = [
       const signedIn = await getAdminSession();
       if (signedIn) {
         const check = await checkStaff("staff");
-        if (!check.ok) return apiError(check.status, "Only the owner can add staff accounts.");
-        const result = await createManagerAccount(input, body.role, body.officeId, { id: signedIn.id, name: signedIn.name });
+        if (!check.ok) return apiError(check.status, "Only an owner can add owner accounts.");
+        const result = await createOwnerAccount(input, body.officeId, { id: signedIn.id, name: signedIn.name });
         if (!result.ok) {
-          if ("closed" in result) return apiError(403, "Only the owner can add staff accounts.");
+          if ("closed" in result) return apiError(403, "Only an owner can add owner accounts.");
           return apiError(400, "Please correct the highlighted fields.", result.errors);
         }
         return json({ ok: true, account: result.account }, 201);
       }
       const result = await createInitialAdminAccount(input);
       if (!result.ok) {
-        if ("closed" in result) return apiError(403, "Admin signup is closed. Ask the owner to create your account.");
+        if ("closed" in result) return apiError(403, "Admin signup is closed. Ask an owner to create your account.");
         return apiError(400, "Please correct the highlighted fields.", result.errors);
       }
       await startAdminSession(result.account.id);
@@ -468,7 +468,7 @@ const routes: Route[] = [
       const result = await updateStaff(
         id,
         { id: check.session.id, name: check.session.name },
-        { responsibilities: body.responsibilities, active: body.active, officeId: body.officeId },
+        { active: body.active, officeId: body.officeId },
       );
       if (!result.ok) return apiError(result.status, result.error);
       return json({ ok: true, member: result.member });
@@ -498,20 +498,18 @@ const routes: Route[] = [
   },
   {
     method: "GET",
-    pattern: /^\/api\/admin\/managers\/([^/]+)$/,
+    pattern: /^\/api\/admin\/owners\/([^/]+)$/,
     handler: async (_request, [id]) => {
-      // A manager can open their own team page; the owner can open any manager's.
-      const session = await getAdminSession();
-      if (!session) return apiError(401, "Please log in as an admin.");
-      if (session.role !== "owner" && session.id !== id) return apiError(403, "You can only view your own team.");
-      const details = await getManagerDetails(id);
-      if (!details) return apiError(404, "Manager not found.");
+      const check = await checkStaff("staff");
+      if (!check.ok) return apiError(check.status, check.error);
+      const details = await getOwnerDetails(id);
+      if (!details) return apiError(404, "Owner not found.");
       return json(details);
     },
   },
   {
     method: "POST",
-    pattern: /^\/api\/admin\/managers\/([^/]+)\/staff$/,
+    pattern: /^\/api\/admin\/owners\/([^/]+)\/staff$/,
     handler: async (request, [id]) => {
       const check = await checkStaff("staff");
       if (!check.ok) return apiError(check.status, check.error);
@@ -519,7 +517,7 @@ const routes: Route[] = [
       if (!body) return apiError(400, "Invalid request.");
       const result = await createTeamMember(
         id,
-        { name: body.name, jobRole: body.jobRole, phone: body.phone, email: body.email },
+        { name: body.name, phone: body.phone, email: body.email },
         { id: check.session.id, name: check.session.name },
       );
       if (!result.ok) return apiError(result.status, result.error, result.errors);
@@ -536,7 +534,7 @@ const routes: Route[] = [
       if (!body) return apiError(400, "Invalid request.");
       const result = await updateTeamMember(
         id,
-        { name: body.name, jobRole: body.jobRole, active: body.active, managerId: body.managerId, phone: body.phone, email: body.email },
+        { name: body.name, active: body.active, ownerId: body.ownerId, phone: body.phone, email: body.email },
         { id: check.session.id, name: check.session.name },
       );
       if (!result.ok) return apiError(result.status, result.error, result.errors);
@@ -611,7 +609,7 @@ const routes: Route[] = [
       if (!check.ok) return apiError(check.status, check.error);
       const body = await readBody(request);
       if (!body) return apiError(400, "Invalid request.");
-      const result = await createRestaurant({ name: body.name, area: body.area, logo: body.logo, managerId: body.managerId });
+      const result = await createRestaurant({ name: body.name, area: body.area, logo: body.logo, ownerId: body.ownerId });
       if (!result.ok) return apiError(result.status, result.error, result.errors);
       return json({ ok: true, restaurant: result.value }, 201);
     },
@@ -680,8 +678,8 @@ const routes: Route[] = [
       if (!restaurant) return apiError(404, "Restaurant not found.");
       const body = await readBody(request);
       if (!body) return apiError(400, "Invalid request.");
-      // Only this restaurant's staff (its manager's team) can be marked here.
-      const team = restaurant.managerId ? await getManagerDetails(restaurant.managerId) : null;
+      // Only this restaurant's staff (its owner's team) can be marked here.
+      const team = restaurant.ownerId ? await getOwnerDetails(restaurant.ownerId) : null;
       const staffId = text(body.staffId);
       if (!team?.staff.some((member) => member.id === staffId)) {
         return apiError(400, "Choose a staff member who works at this restaurant.");

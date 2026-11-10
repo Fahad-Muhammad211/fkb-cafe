@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { Activity, Building2, ClipboardList, LayoutDashboard, LogOut, Menu, Store, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
 import { adminLogoutRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
-import { SECTIONS, canAccess, type Responsibility, type StaffRole } from "@/lib/permissions";
+import { SECTIONS, canAccess, type StaffRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -24,7 +24,6 @@ const ICONS: Record<string, LucideIcon> = {
 export interface ShellSession {
   name: string;
   role: StaffRole;
-  responsibilities: Responsibility[];
 }
 
 // Layout for the protected admin pages. Access is checked on the server before this renders
@@ -48,7 +47,7 @@ function Brand({ session }: { session: ShellSession }) {
       </span>
       <div className="min-w-0">
         <p className="truncate font-bold leading-tight">{session.name}</p>
-        <p className="text-xs font-semibold uppercase tracking-wide text-orange-500">{session.role === "owner" ? "Owner" : "Manager"}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-orange-500">Owner</p>
       </div>
     </div>
   );

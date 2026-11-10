@@ -1,19 +1,18 @@
 import { getCollection } from "@/lib/local/collections";
 import { randomHex } from "@/lib/local/random";
-import { findAdminAccount, type StaffMember as ManagerMember } from "@/lib/local/adminAccounts";
+import { findAdminAccount, type StaffMember as OwnerMember } from "@/lib/local/adminAccounts";
 import { findOffice, type Office } from "@/lib/local/offices";
 import { listActivityFor, logActivity, type ActivityEntry, type Actor } from "@/lib/local/activity";
-import { parseJobRole, type StaffJobRole } from "@/lib/staffRoles";
 import { isValidName } from "@/lib/validation";
 
-// Staff who work under a manager. Each staff record names exactly one manager, so a manager's team is
-// the set of records with that manager's ID. Staff do not have dashboard logins.
+// Staff who work under an owner. Each staff record names exactly one owner, so an owner's team is
+// the set of records with that owner's ID. Staff do not have dashboard logins.
+// The stored field is still called "managerId" so teams saved before the single owner role are kept.
 
 export interface TeamMember {
   id: string;
   name: string;
-  jobRole: StaffJobRole | null;
-  managerId: string;
+  ownerId: string;
   active: boolean;
   createdAt: string;
   phone: string;
@@ -23,7 +22,8 @@ export interface TeamMember {
 type TeamDoc = {
   _id: string;
   name: string;
-  jobRole: string;
+  // Job title saved before job titles were removed. Kept on old records, no longer read or written.
+  jobRole?: string;
   managerId: string;
   active?: boolean;
   createdAt: string;
@@ -43,8 +43,8 @@ function contactErrors(phone: string, email: string): Record<string, string> {
   return errors;
 }
 
-export interface ManagerDetails {
-  manager: ManagerMember;
+export interface OwnerDetails {
+  owner: OwnerMember;
   office: Office | null;
   staff: TeamMember[];
   activity: ActivityEntry[];
@@ -60,27 +60,25 @@ const teamCollection = () =>
 const toTeamMember = (doc: TeamDoc): TeamMember => ({
   id: doc._id,
   name: doc.name,
-  jobRole: parseJobRole(doc.jobRole),
-  managerId: doc.managerId,
+  ownerId: doc.managerId,
   active: doc.active !== false,
   createdAt: doc.createdAt,
   phone: doc.phone ?? "",
   email: doc.email ?? "",
 });
 
-// Full details for one manager. Returns null when the ID is not a manager account.
-export async function getManagerDetails(managerId: string): Promise<ManagerDetails | null> {
-  const account = await findAdminAccount(managerId);
-  if (!account || account.role !== "manager") return null;
+// Full details for one owner. Returns null when there is no account with this ID.
+export async function getOwnerDetails(ownerId: string): Promise<OwnerDetails | null> {
+  const account = await findAdminAccount(ownerId);
+  if (!account) return null;
   const office = account.officeId ? await findOffice(account.officeId) : null;
-  const staffDocs = await (await teamCollection()).find({ managerId }).sort({ name: 1 }).limit(500).toArray();
+  const staffDocs = await (await teamCollection()).find({ managerId: ownerId }).sort({ name: 1 }).limit(500).toArray();
   return {
-    manager: {
+    owner: {
       id: account.id,
       name: account.name,
       email: account.email,
       role: account.role,
-      responsibilities: account.responsibilities,
       active: account.active,
       createdAt: account.createdAt,
       officeId: account.officeId,
@@ -88,35 +86,32 @@ export async function getManagerDetails(managerId: string): Promise<ManagerDetai
     },
     office,
     staff: staffDocs.map(toTeamMember),
-    activity: await listActivityFor(managerId),
+    activity: await listActivityFor(ownerId),
   };
 }
 
 export async function createTeamMember(
-  managerId: string,
-  input: { name: unknown; jobRole: unknown; phone?: unknown; email?: unknown },
+  ownerId: string,
+  input: { name: unknown; phone?: unknown; email?: unknown },
   actor: Actor,
 ): Promise<TeamResult<TeamMember>> {
-  const manager = await findAdminAccount(managerId);
-  if (!manager || manager.role !== "manager") return { ok: false, status: 404, error: "Manager not found." };
+  const owner = await findAdminAccount(ownerId);
+  if (!owner) return { ok: false, status: 404, error: "Owner not found." };
 
   const name = typeof input.name === "string" ? input.name.trim() : "";
-  const jobRole = parseJobRole(input.jobRole);
   const phone = typeof input.phone === "string" ? input.phone.trim() : "";
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const errors: Record<string, string> = { ...contactErrors(phone, email) };
   const nameError = isValidName(name);
   if (nameError) errors.name = nameError;
-  if (!jobRole) errors.jobRole = "Choose the job role.";
-  if (Object.keys(errors).length > 0 || !jobRole) {
+  if (Object.keys(errors).length > 0) {
     return { ok: false, status: 400, error: "Please correct the highlighted fields.", errors };
   }
 
   const doc: TeamDoc = {
     _id: `staff-${Date.now().toString(36)}-${randomHex(3)}`,
     name,
-    jobRole,
-    managerId,
+    managerId: ownerId,
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: actor.id,
@@ -124,14 +119,14 @@ export async function createTeamMember(
     email,
   };
   await (await teamCollection()).insertOne(doc);
-  await logActivity(managerId, actor, "Staff added", `${name} (${jobRole})`);
+  await logActivity(ownerId, actor, "Staff added", name);
   return { ok: true, value: toTeamMember(doc) };
 }
 
-// Edits one staff member: details, on/off status, or the manager they work under.
+// Edits one staff member: details, on/off status, or the owner they work under.
 export async function updateTeamMember(
   staffId: string,
-  changes: { name?: unknown; jobRole?: unknown; active?: unknown; managerId?: unknown; phone?: unknown; email?: unknown },
+  changes: { name?: unknown; active?: unknown; ownerId?: unknown; phone?: unknown; email?: unknown },
   actor: Actor,
 ): Promise<TeamResult<TeamMember>> {
   const collection = await teamCollection();
@@ -153,21 +148,16 @@ export async function updateTeamMember(
     if (nameError) return { ok: false, status: 400, error: nameError };
     $set.name = name;
   }
-  if (changes.jobRole !== undefined) {
-    const jobRole = parseJobRole(changes.jobRole);
-    if (!jobRole) return { ok: false, status: 400, error: "Choose a valid job role." };
-    $set.jobRole = jobRole;
-  }
   if (changes.active !== undefined) {
     if (typeof changes.active !== "boolean") return { ok: false, status: 400, error: "Invalid status." };
     $set.active = changes.active;
   }
-  let newManagerName: string | null = null;
-  if (changes.managerId !== undefined) {
-    const target = typeof changes.managerId === "string" ? await findAdminAccount(changes.managerId) : null;
-    if (!target || target.role !== "manager") return { ok: false, status: 400, error: "Choose a valid manager." };
+  let newOwnerName: string | null = null;
+  if (changes.ownerId !== undefined) {
+    const target = typeof changes.ownerId === "string" ? await findAdminAccount(changes.ownerId) : null;
+    if (!target) return { ok: false, status: 400, error: "Choose a valid owner." };
     $set.managerId = target.id;
-    newManagerName = target.name;
+    newOwnerName = target.name;
   }
   if (Object.keys($set).length === 0) return { ok: false, status: 400, error: "Nothing to change." };
 
@@ -175,17 +165,17 @@ export async function updateTeamMember(
   if (!updated) return { ok: false, status: 404, error: "Staff member not found." };
   const member = toTeamMember(updated);
 
-  // Activity: a move is recorded on both managers' histories; other edits go on the current manager's.
+  // Activity: a move is recorded on both owners' histories; other edits go on the current owner's.
   if ($set.managerId !== undefined && $set.managerId !== current.managerId) {
     const previous = await findAdminAccount(current.managerId);
-    await logActivity(current.managerId, actor, "Staff moved out", `${member.name} moved to ${newManagerName ?? "another manager"}`);
-    await logActivity($set.managerId, actor, "Staff moved in", `${member.name} joined from ${previous?.name ?? "a removed manager"}`);
+    await logActivity(current.managerId, actor, "Staff moved out", `${member.name} moved to ${newOwnerName ?? "another owner"}`);
+    await logActivity($set.managerId, actor, "Staff moved in", `${member.name} joined from ${previous?.name ?? "a removed owner"}`);
   }
-  if (changes.name !== undefined || changes.jobRole !== undefined) {
-    await logActivity(member.managerId, actor, "Staff details updated", `${member.name} (${member.jobRole ?? "no role"})`);
+  if (changes.name !== undefined) {
+    await logActivity(member.ownerId, actor, "Staff details updated", member.name);
   }
   if (changes.active !== undefined && current.active !== member.active) {
-    await logActivity(member.managerId, actor, member.active ? "Staff switched on" : "Staff switched off", member.name);
+    await logActivity(member.ownerId, actor, member.active ? "Staff switched on" : "Staff switched off", member.name);
   }
   return { ok: true, value: member };
 }

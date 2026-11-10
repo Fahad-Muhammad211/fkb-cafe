@@ -13,14 +13,13 @@ import { useSession } from "@/lib/local/useSession";
 import { isCancelled, isDelivered, statusLabel } from "@/lib/orderStatus";
 import type { Order } from "@/types";
 
-// Owner-only detail page for one restaurant. Every table is that restaurant's data only: the server
+// Owner detail page for one restaurant. Every table is that restaurant's data only: the server
 // filters each list by the restaurant's ID. The page re-reads the data every few seconds, so rider
 // positions and new orders appear without a reload.
 
 interface StaffView {
   id: string;
   name: string;
-  jobRole: string | null;
   phone: string;
   email: string;
   active: boolean;
@@ -156,7 +155,7 @@ function RestaurantDetailView({ restaurantId }: { restaurantId: string }) {
                   <MapPin className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
                   {data.restaurant.area}
                 </Pill>
-                <Pill tone={data.restaurant.managerName ? "orange" : "red"}>{data.restaurant.managerName ?? "No manager assigned"}</Pill>
+                <Pill tone={data.restaurant.ownerName ? "orange" : "red"}>{data.restaurant.ownerName ?? "No owner assigned"}</Pill>
               </div>
             </div>
           </header>
@@ -166,7 +165,7 @@ function RestaurantDetailView({ restaurantId }: { restaurantId: string }) {
           </Section>
 
           <Section title="Staff list" count={data.staff.length}>
-            <StaffTable staff={data.staff} hasManager={Boolean(data.restaurant.managerId)} />
+            <StaffTable staff={data.staff} hasOwner={Boolean(data.restaurant.ownerId)} />
           </Section>
 
           <Section title="Grocery list" count={data.grocery.length}>
@@ -277,15 +276,14 @@ function OrdersTable({ orders, riders, act }: { orders: Order[]; riders: RiderVi
   );
 }
 
-function StaffTable({ staff, hasManager }: { staff: StaffView[]; hasManager: boolean }) {
-  if (!hasManager) return empty("Assign a manager to this restaurant to see their staff.");
-  if (staff.length === 0) return empty("No staff work under this restaurant's manager yet. Add staff from the manager's page under Employees.");
+function StaffTable({ staff, hasOwner }: { staff: StaffView[]; hasOwner: boolean }) {
+  if (!hasOwner) return empty("Assign an owner to this restaurant to see their staff.");
+  if (staff.length === 0) return empty("No staff work under this restaurant's owner yet. Add staff from the owner's page under Employees.");
   return (
     <TableScroll>
       <thead>
         <tr>
           <th className={th}>Name</th>
-          <th className={th}>Role</th>
           <th className={th}>Phone</th>
           <th className={th}>Email</th>
           <th className={th}>Status</th>
@@ -295,7 +293,6 @@ function StaffTable({ staff, hasManager }: { staff: StaffView[]; hasManager: boo
         {staff.map((member) => (
           <tr key={member.id}>
             <td className={td}>{member.name}</td>
-            <td className={td}>{member.jobRole ?? "No role"}</td>
             <td className={td}>{member.phone || "—"}</td>
             <td className={td}>{member.email || "—"}</td>
             <td className={td}>
@@ -526,7 +523,7 @@ function AttendanceTable({
         <p className="pb-2 text-sm text-zinc-400">Choose present or absent for each person, then save the row.</p>
       </div>
       {staff.length === 0 ? (
-        empty("No staff to mark yet. Staff appear here once they work under this restaurant's manager.")
+        empty("No staff to mark yet. Staff appear here once they work under this restaurant's owner.")
       ) : (
         <TableScroll>
           <thead>

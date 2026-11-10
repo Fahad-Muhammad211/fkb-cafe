@@ -21,5 +21,5 @@ export async function getAdminSession(): Promise<StaffSession | null> {
   if (!accountId) return null;
   const account = await findAdminAccount(accountId);
   if (!account || !account.active) return null;
-  return { id: account.id, name: account.name, email: account.email, role: account.role, responsibilities: account.responsibilities };
+  return { id: account.id, name: account.name, email: account.email, role: account.role };
 }

@@ -2,12 +2,12 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowRight, Pencil, Power, ShieldCheck, UserPlus, X } from "lucide-react";
+import { ArrowRight, Power, ShieldCheck, UserPlus, X } from "lucide-react";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
-import { ASSIGNABLE_ROLES, RESPONSIBILITIES, RESPONSIBILITY_LABELS, type Responsibility, type StaffRole } from "@/lib/permissions";
+import type { StaffRole } from "@/lib/permissions";
 import { isValidName, isValidPassword } from "@/lib/validation";
 
-// Owner-only screen. The server checks the owner role on every request below; this screen only draws it.
+// Owner screen. The data handlers check the signed-in owner on every request below; this screen only draws it.
 
 // Same shape as StaffMember in lib/local/adminAccounts.ts.
 interface StaffMember {
@@ -15,7 +15,6 @@ interface StaffMember {
   name: string;
   email: string;
   role: StaffRole;
-  responsibilities: Responsibility[];
   active: boolean;
   createdAt: string;
   officeId: string | null;
@@ -50,65 +49,15 @@ export function Pill({ tone, children }: { tone: "orange" | "zinc" | "red" | "gr
   return <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ring-1 ${tones[tone]}`}>{children}</span>;
 }
 
-export function AreaCheckboxes({ selected, onChange, idPrefix }: { selected: Responsibility[]; onChange: (next: Responsibility[]) => void; idPrefix: string }) {
-  return (
-    <fieldset className="flex flex-col gap-2">
-      <legend className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Areas this manager can work on</legend>
-      <div className="flex flex-wrap gap-2">
-        {RESPONSIBILITIES.map((area) => {
-          const checked = selected.includes(area);
-          return (
-            <label
-              key={area}
-              htmlFor={`${idPrefix}-${area}`}
-              className={`flex cursor-pointer items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold ring-1 transition-colors ${
-                checked ? "bg-orange-500 text-black ring-orange-500" : "bg-zinc-900 text-zinc-300 ring-zinc-700 hover:ring-orange-500/50"
-              }`}
-            >
-              <input
-                id={`${idPrefix}-${area}`}
-                type="checkbox"
-                className="sr-only"
-                checked={checked}
-                onChange={() => onChange(checked ? selected.filter((a) => a !== area) : RESPONSIBILITIES.filter((r) => r === area || selected.includes(r)))}
-              />
-              {RESPONSIBILITY_LABELS[area]}
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
-
 export function EmployeesView({ currentId }: { currentId: string }) {
   const { data, error, loading, reload } = useCustomerData<{ staff: StaffMember[] }>("/api/admin/employees");
   const officesState = useCustomerData<{ offices: OfficeOption[] }>("/api/admin/offices");
   const offices = officesState.data?.offices ?? [];
   const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draftAreas, setDraftAreas] = useState<Responsibility[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const staff = data?.staff ?? [];
-
-  const saveAreas = async (member: StaffMember) => {
-    if (draftAreas.length === 0) {
-      setNotice({ tone: "error", text: "Choose at least one area." });
-      return;
-    }
-    setBusyId(member.id);
-    const result = await customerRequest(`/api/admin/employees/${encodeURIComponent(member.id)}`, "PATCH", { responsibilities: draftAreas });
-    setBusyId(null);
-    if (!result.ok) {
-      setNotice({ tone: "error", text: result.error });
-      return;
-    }
-    setEditingId(null);
-    setNotice({ tone: "success", text: `${member.name}'s areas were saved.` });
-    reload();
-  };
 
   const toggleActive = async (member: StaffMember) => {
     const next = !member.active;
@@ -128,16 +77,16 @@ export function EmployeesView({ currentId }: { currentId: string }) {
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owner only</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owners</p>
           <h1 className="mt-1 text-3xl font-black uppercase tracking-tight md:text-4xl">Employees</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-400">
-            Managers can only use the areas you give them. Finance and staff management stay with the owner.
+            Every account is an owner with access to every area, including finance and staff.
           </p>
         </div>
         {!adding && (
           <button type="button" onClick={() => setAdding(true)} className={primaryClass}>
             <UserPlus className="h-4 w-4" aria-hidden="true" />
-            Add manager
+            Add owner
           </button>
         )}
       </header>
@@ -149,14 +98,14 @@ export function EmployeesView({ currentId }: { currentId: string }) {
       )}
 
       {adding && (
-        <AddManagerForm
+        <AddOwnerForm
           offices={offices}
           officesLoading={officesState.loading}
           officesError={officesState.error}
           onCancel={() => setAdding(false)}
           onCreated={(name) => {
             setAdding(false);
-            setNotice({ tone: "success", text: `${name} was added as a manager.` });
+            setNotice({ tone: "success", text: `${name} was added as an owner.` });
             reload();
           }}
         />
@@ -172,85 +121,42 @@ export function EmployeesView({ currentId }: { currentId: string }) {
       {data && (
         <ul className="grid gap-4">
           {staff.map((member) => {
-            const isOwner = member.role === "owner";
             const isSelf = member.id === currentId;
-            const editing = editingId === member.id;
             return (
               <li key={member.id} className={panelClass}>
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      {isOwner ? (
-                        <p className="text-lg font-black">{member.name}</p>
-                      ) : (
-                        <Link href={`/admin/employees/${encodeURIComponent(member.id)}`} className="text-lg font-black hover:text-orange-400">
-                          {member.name}
-                        </Link>
-                      )}
-                      {isOwner ? <Pill tone="orange">Owner</Pill> : <Pill tone="zinc">Manager</Pill>}
+                      <Link href={`/admin/employees/${encodeURIComponent(member.id)}`} className="text-lg font-black hover:text-orange-400">
+                        {member.name}
+                      </Link>
+                      <Pill tone="orange">Owner</Pill>
                       {isSelf && <Pill tone="zinc">You</Pill>}
                       <Pill tone={member.active ? "green" : "red"}>{member.active ? "Active" : "Switched off"}</Pill>
-                      {!isOwner &&
-                        (member.officeName ? <Pill tone="orange">{member.officeName}</Pill> : <Pill tone="red">No office assigned</Pill>)}
+                      {member.officeName ? <Pill tone="orange">{member.officeName}</Pill> : <Pill tone="red">No office assigned</Pill>}
                     </div>
                     <p className="mt-1 break-all text-sm text-zinc-400">{member.email}</p>
                     <p className="mt-1 text-xs text-zinc-500">Added {new Date(member.createdAt).toLocaleDateString("en-GB", { dateStyle: "medium" })}</p>
                   </div>
 
-                  {!isOwner && !editing && (
-                    <div className="flex flex-wrap gap-2">
-                      <Link href={`/admin/employees/${encodeURIComponent(member.id)}`} className={ghostClass}>
-                        View details
-                        <ArrowRight className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingId(member.id);
-                          setDraftAreas(member.responsibilities);
-                        }}
-                        className={ghostClass}
-                      >
-                        <Pencil className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                        Edit areas
+                  <div className="flex flex-wrap gap-2">
+                    <Link href={`/admin/employees/${encodeURIComponent(member.id)}`} className={ghostClass}>
+                      View details
+                      <ArrowRight className="h-4 w-4 text-orange-500" aria-hidden="true" />
+                    </Link>
+                    {!isSelf && (
+                      <button type="button" onClick={() => toggleActive(member)} disabled={busyId === member.id} className={ghostClass}>
+                        <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
+                        {member.active ? "Switch off" : "Switch on"}
                       </button>
-                      {!isSelf && (
-                        <button type="button" onClick={() => toggleActive(member)} disabled={busyId === member.id} className={ghostClass}>
-                          <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                          {member.active ? "Switch off" : "Switch on"}
-                        </button>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
-                {isOwner ? (
-                  <p className="mt-4 flex items-center gap-2 text-sm text-zinc-300">
-                    <ShieldCheck className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                    Owners have access to every area, including finance and staff.
-                  </p>
-                ) : editing ? (
-                  <div className="mt-5 flex flex-col gap-4 border-t border-zinc-800 pt-5">
-                    <AreaCheckboxes selected={draftAreas} onChange={setDraftAreas} idPrefix={`edit-${member.id}`} />
-                    <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => saveAreas(member)} disabled={busyId === member.id} className={primaryClass}>
-                        {busyId === member.id ? "Saving…" : "Save areas"}
-                      </button>
-                      <button type="button" onClick={() => setEditingId(null)} className={ghostClass}>
-                        <X className="h-4 w-4" aria-hidden="true" />
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {member.responsibilities.map((area) => (
-                      <Pill key={area} tone="orange">
-                        {RESPONSIBILITY_LABELS[area]}
-                      </Pill>
-                    ))}
-                  </div>
-                )}
+                <p className="mt-4 flex items-center gap-2 text-sm text-zinc-300">
+                  <ShieldCheck className="h-4 w-4 text-orange-500" aria-hidden="true" />
+                  Owners have access to every area, including finance and staff.
+                </p>
               </li>
             );
           })}
@@ -260,7 +166,7 @@ export function EmployeesView({ currentId }: { currentId: string }) {
   );
 }
 
-function AddManagerForm({
+function AddOwnerForm({
   offices,
   officesLoading,
   officesError,
@@ -274,7 +180,6 @@ function AddManagerForm({
   onCreated: (name: string) => void;
 }) {
   const [values, setValues] = useState({ name: "", email: "", password: "", confirm: "" });
-  const [role, setRole] = useState<StaffRole>(ASSIGNABLE_ROLES[0]?.value ?? "manager");
   const [officeId, setOfficeId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
@@ -285,19 +190,17 @@ function AddManagerForm({
     const found: Record<string, string> = {};
     const nameError = isValidName(values.name);
     if (nameError) found.name = nameError;
-    if (!values.email.trim()) found.email = "Enter the manager's Gmail address.";
+    if (!values.email.trim()) found.email = "Enter the owner's Gmail address.";
     const passwordError = isValidPassword(values.password);
     if (passwordError) found.password = passwordError;
     else if (values.confirm !== values.password) found.confirm = "Passwords do not match.";
-    if (!role) found.role = "Choose a role.";
-    if (!officeId) found.officeId = "Choose the office this manager works at.";
+    if (!officeId) found.officeId = "Choose the office this owner works at.";
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 
     setPending(true);
     const result = await customerRequest<{ account: { name: string } }>("/api/admin/accounts", "POST", {
       ...values,
-      role,
       officeId,
     });
     setPending(false);
@@ -311,7 +214,7 @@ function AddManagerForm({
   return (
     <form onSubmit={handleSubmit} noValidate className={`${panelClass} flex flex-col gap-5`}>
       <div className="flex items-center justify-between">
-        <h2 className="font-bold">New manager</h2>
+        <h2 className="font-bold">New owner</h2>
         <button type="button" onClick={onCancel} aria-label="Close" className="rounded-full p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white">
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
@@ -324,14 +227,14 @@ function AddManagerForm({
           const types = { name: "text", email: "email", password: "password", confirm: "password" } as const;
           return (
             <div key={key} className="flex flex-col gap-1.5">
-              <label htmlFor={`manager-${key}`} className="text-sm font-semibold text-zinc-200">
+              <label htmlFor={`owner-${key}`} className="text-sm font-semibold text-zinc-200">
                 {labels[key]}
               </label>
               <input
-                id={`manager-${key}`}
+                id={`owner-${key}`}
                 type={types[key]}
                 autoComplete={key === "email" ? "off" : "new-password"}
-                placeholder={key === "email" ? "manager@gmail.com" : undefined}
+                placeholder={key === "email" ? "owner@gmail.com" : undefined}
                 value={values[key]}
                 onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
                 aria-invalid={Boolean(errors[key])}
@@ -344,11 +247,11 @@ function AddManagerForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="manager-officeId" className="text-sm font-semibold text-zinc-200">
+        <label htmlFor="owner-officeId" className="text-sm font-semibold text-zinc-200">
           Office name
         </label>
         <select
-          id="manager-officeId"
+          id="owner-officeId"
           value={officeId}
           onChange={(e) => setOfficeId(e.target.value)}
           disabled={offices.length === 0}
@@ -369,36 +272,16 @@ function AddManagerForm({
             <Link href="/admin/offices" className="underline hover:text-amber-200">
               Offices page
             </Link>
-            . Every manager must be assigned to an office.
+            . Every owner added here must be assigned to an office.
           </p>
         )}
         {errors.officeId && <p className="text-xs text-red-300">{errors.officeId}</p>}
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="manager-role" className="text-sm font-semibold text-zinc-200">
-          Role
-        </label>
-        <select
-          id="manager-role"
-          value={role}
-          onChange={(e) => setRole(e.target.value as StaffRole)}
-          aria-invalid={Boolean(errors.role)}
-          className={fieldClass}
-        >
-          {ASSIGNABLE_ROLES.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        {errors.role && <p className="text-xs text-red-300">{errors.role}</p>}
-      </div>
-
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={pending || offices.length === 0} className={primaryClass}>
           <UserPlus className="h-4 w-4" aria-hidden="true" />
-          {pending ? "Adding…" : "Add manager"}
+          {pending ? "Adding…" : "Add owner"}
         </button>
         <button type="button" onClick={onCancel} className={ghostClass}>
           Cancel

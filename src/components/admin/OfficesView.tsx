@@ -10,9 +10,9 @@ import { canAccess, type StaffRole } from "@/lib/permissions";
 import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
 import { useSession } from "@/lib/local/useSession";
 
-// Owner-only. Offices are the list managers choose from when they are added. Each office name is unique.
+// Owner page. Offices are the list an owner is assigned to when added from the Employees page. Each office name is unique.
 
-interface ManagerSummary {
+interface OwnerSummary {
   id: string;
   role: StaffRole;
   officeId: string | null;
@@ -35,12 +35,12 @@ export function OfficesGate() {
 
 function OfficesView() {
   const offices = useCustomerData<{ offices: OfficeOption[] }>("/api/admin/offices");
-  const employees = useCustomerData<{ staff: ManagerSummary[] }>("/api/admin/employees");
+  const employees = useCustomerData<{ staff: OwnerSummary[] }>("/api/admin/employees");
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const list = offices.data?.offices ?? [];
-  const managers = (employees.data?.staff ?? []).filter((member) => member.role === "manager");
-  const managerCount = (officeId: string) => managers.filter((member) => member.officeId === officeId).length;
+  const owners = employees.data?.staff ?? [];
+  const ownerCount = (officeId: string) => owners.filter((member) => member.officeId === officeId).length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,10 +50,10 @@ function OfficesView() {
       </Link>
 
       <header>
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owner only</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owners</p>
         <h1 className="mt-1 text-3xl font-black uppercase tracking-tight md:text-4xl">Offices</h1>
         <p className="mt-2 max-w-2xl text-sm text-zinc-400">
-          Create each office here. When you add a manager, they are assigned to one of these offices.
+          Create each office here. When you add an owner, they are assigned to one of these offices.
         </p>
       </header>
 
@@ -81,7 +81,7 @@ function OfficesView() {
         <div className={`${panelClass} text-center`}>
           <Building2 className="mx-auto h-8 w-8 text-zinc-500" aria-hidden="true" />
           <p className="mt-3 font-bold">No offices yet</p>
-          <p className="mt-1 text-sm text-zinc-400">Add the first office above. Managers can be added once at least one office exists.</p>
+          <p className="mt-1 text-sm text-zinc-400">Add the first office above. Owners can be added once at least one office exists.</p>
         </div>
       )}
 
@@ -100,7 +100,7 @@ function OfficesView() {
                   )}
                 </div>
                 <Pill tone="zinc">
-                  {managerCount(office.id)} {managerCount(office.id) === 1 ? "manager" : "managers"}
+                  {ownerCount(office.id)} {ownerCount(office.id) === 1 ? "owner" : "owners"}
                 </Pill>
               </div>
               <p className="mt-3 text-xs text-zinc-500">Created {new Date(office.createdAt).toLocaleDateString("en-GB", { dateStyle: "medium" })}</p>

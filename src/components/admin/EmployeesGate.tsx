@@ -7,7 +7,7 @@ import { canAccess } from "@/lib/permissions";
 import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
 import { useSession } from "@/lib/local/useSession";
 
-// Owner only. Managers are sent back to the dashboard home.
+// Owner page. Signed-out visitors go to the admin login.
 export function EmployeesGate() {
   const router = useRouter();
   const status = useSession<StaffSession>(getAdminSession);

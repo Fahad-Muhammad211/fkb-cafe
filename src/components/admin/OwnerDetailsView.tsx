@@ -4,22 +4,20 @@ import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Building2, Pencil, Plus, Power, UserPlus, X } from "lucide-react";
-import { AreaCheckboxes, fieldClass, ghostClass, panelClass, Pill, primaryClass, type OfficeOption } from "@/components/admin/EmployeesView";
+import { fieldClass, ghostClass, panelClass, Pill, primaryClass, type OfficeOption } from "@/components/admin/EmployeesView";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
-import { RESPONSIBILITY_LABELS, canAccess, type Responsibility, type StaffRole } from "@/lib/permissions";
-import { STAFF_JOB_ROLES, type StaffJobRole } from "@/lib/staffRoles";
+import { canAccess, type StaffRole } from "@/lib/permissions";
 import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
 import { useSession } from "@/lib/local/useSession";
 
-// Owner-only page for one manager: profile, office, team and activity history.
-// The server returns only this manager's own staff and history, and checks the owner role on every request.
+// Page for one owner: profile, office, team and activity history.
+// The data handlers return only this owner's own staff and history, and check the signed-in owner on every request.
 
-interface ManagerView {
+interface OwnerView {
   id: string;
   name: string;
   email: string;
   role: StaffRole;
-  responsibilities: Responsibility[];
   active: boolean;
   createdAt: string;
   officeId: string | null;
@@ -29,8 +27,7 @@ interface ManagerView {
 interface TeamMemberView {
   id: string;
   name: string;
-  jobRole: StaffJobRole | null;
-  managerId: string;
+  ownerId: string;
   active: boolean;
   createdAt: string;
 }
@@ -43,8 +40,8 @@ interface ActivityView {
   createdAt: string;
 }
 
-interface ManagerDetailsResponse {
-  manager: ManagerView;
+interface OwnerDetailsResponse {
+  owner: OwnerView;
   office: OfficeOption | null;
   staff: TeamMemberView[];
   activity: ActivityView[];
@@ -54,7 +51,7 @@ type Notice = { tone: "success" | "error"; text: string } | null;
 
 const formatDateTime = (iso: string) => new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
 
-export function ManagerDetailsGate({ managerId }: { managerId: string }) {
+export function OwnerDetailsGate({ ownerId }: { ownerId: string }) {
   const router = useRouter();
   const status = useSession<StaffSession>(getAdminSession);
   const allowed = status.state === "ready" && canAccess(status.value, "staff");
@@ -64,16 +61,16 @@ export function ManagerDetailsGate({ managerId }: { managerId: string }) {
     else if (status.state === "ready" && !allowed) router.replace("/admin");
   }, [status.state, allowed, router]);
 
-  if (status.state !== "ready") return <p className="text-sm text-zinc-400">Loading manager…</p>;
+  if (status.state !== "ready") return <p className="text-sm text-zinc-400">Loading owner…</p>;
   if (!allowed) return null;
-  return <ManagerDetailsView managerId={managerId} />;
+  return <OwnerDetailsView ownerId={ownerId} currentId={status.value.id} />;
 }
 
-function ManagerDetailsView({ managerId }: { managerId: string }) {
-  const base = `/api/admin/managers/${encodeURIComponent(managerId)}`;
-  const details = useCustomerData<ManagerDetailsResponse>(base);
+function OwnerDetailsView({ ownerId, currentId }: { ownerId: string; currentId: string }) {
+  const base = `/api/admin/owners/${encodeURIComponent(ownerId)}`;
+  const details = useCustomerData<OwnerDetailsResponse>(base);
   const officesState = useCustomerData<{ offices: OfficeOption[] }>("/api/admin/offices");
-  const employees = useCustomerData<{ staff: ManagerView[] }>("/api/admin/employees");
+  const employees = useCustomerData<{ staff: OwnerView[] }>("/api/admin/employees");
   const [notice, setNotice] = useState<Notice>(null);
 
   const reloadAll = () => details.reload();
@@ -85,7 +82,7 @@ function ManagerDetailsView({ managerId }: { managerId: string }) {
         Back to Employees
       </Link>
 
-      {details.loading && <p className="text-sm text-zinc-400">Loading manager…</p>}
+      {details.loading && <p className="text-sm text-zinc-400">Loading owner…</p>}
       {details.error && (
         <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
           {details.error}
@@ -98,11 +95,12 @@ function ManagerDetailsView({ managerId }: { managerId: string }) {
       )}
 
       {details.data && (
-        <ManagerContent
-          key={details.data.manager.id}
+        <OwnerContent
+          key={details.data.owner.id}
           data={details.data}
+          isSelf={details.data.owner.id === currentId}
           offices={officesState.data?.offices ?? []}
-          managers={(employees.data?.staff ?? []).filter((m) => m.role === "manager" && m.id !== managerId)}
+          owners={(employees.data?.staff ?? []).filter((m) => m.id !== ownerId)}
           setNotice={setNotice}
           reload={reloadAll}
         />
@@ -111,29 +109,29 @@ function ManagerDetailsView({ managerId }: { managerId: string }) {
   );
 }
 
-function ManagerContent({
+function OwnerContent({
   data,
+  isSelf,
   offices,
-  managers,
+  owners,
   setNotice,
   reload,
 }: {
-  data: ManagerDetailsResponse;
+  data: OwnerDetailsResponse;
+  isSelf: boolean;
   offices: OfficeOption[];
-  managers: ManagerView[];
+  owners: OwnerView[];
   setNotice: (n: Notice) => void;
   reload: () => void;
 }) {
-  const { manager, office, staff, activity } = data;
-  const [editingAreas, setEditingAreas] = useState(false);
-  const [areaDraft, setAreaDraft] = useState<Responsibility[]>(manager.responsibilities);
-  const [officeDraft, setOfficeDraft] = useState(manager.officeId ?? "");
+  const { owner, office, staff, activity } = data;
+  const [officeDraft, setOfficeDraft] = useState(owner.officeId ?? "");
   const [busy, setBusy] = useState(false);
 
-  // Manager-level changes go through the employees endpoint, which owns manager accounts.
-  const patchManager = async (body: Record<string, unknown>, success: string) => {
+  // Account-level changes go through the employees endpoint, which owns the owner accounts.
+  const patchOwner = async (body: Record<string, unknown>, success: string) => {
     setBusy(true);
-    const result = await customerRequest(`/api/admin/employees/${encodeURIComponent(manager.id)}`, "PATCH", body);
+    const result = await customerRequest(`/api/admin/employees/${encodeURIComponent(owner.id)}`, "PATCH", body);
     setBusy(false);
     if (!result.ok) {
       setNotice({ tone: "error", text: result.error });
@@ -144,38 +142,30 @@ function ManagerContent({
     return true;
   };
 
-  const saveAreas = async () => {
-    if (areaDraft.length === 0) {
-      setNotice({ tone: "error", text: "Choose at least one area." });
-      return;
-    }
-    if (await patchManager({ responsibilities: areaDraft }, "Areas were saved.")) setEditingAreas(false);
-  };
-
   const saveOffice = async () => {
     if (!officeDraft) {
       setNotice({ tone: "error", text: "Choose an office." });
       return;
     }
-    await patchManager({ officeId: officeDraft }, "Office was saved.");
+    await patchOwner({ officeId: officeDraft }, "Office was saved.");
   };
 
   const toggleActive = async () => {
-    const next = !manager.active;
-    if (!window.confirm(next ? `Switch ${manager.name} back on?` : `Switch ${manager.name} off? They will be signed out straight away.`)) return;
-    await patchManager({ active: next }, `${manager.name} is now ${next ? "active" : "switched off"}.`);
+    const next = !owner.active;
+    if (!window.confirm(next ? `Switch ${owner.name} back on?` : `Switch ${owner.name} off? They will be signed out straight away.`)) return;
+    await patchOwner({ active: next }, `${owner.name} is now ${next ? "active" : "switched off"}.`);
   };
 
   return (
     <>
       <header className="flex flex-col gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Manager</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-500">Owner</p>
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-3xl font-black tracking-tight md:text-4xl">{manager.name}</h1>
-          <Pill tone={manager.active ? "green" : "red"}>{manager.active ? "Active" : "Switched off"}</Pill>
-          {manager.officeName ? <Pill tone="orange">{manager.officeName}</Pill> : <Pill tone="red">No office assigned</Pill>}
+          <h1 className="text-3xl font-black tracking-tight md:text-4xl">{owner.name}</h1>
+          <Pill tone={owner.active ? "green" : "red"}>{owner.active ? "Active" : "Switched off"}</Pill>
+          {owner.officeName ? <Pill tone="orange">{owner.officeName}</Pill> : <Pill tone="red">No office assigned</Pill>}
         </div>
-        <p className="break-all text-sm text-zinc-400">{manager.email}</p>
+        <p className="break-all text-sm text-zinc-400">{owner.email}</p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -183,59 +173,20 @@ function ManagerContent({
         <section className={`${panelClass} flex flex-col gap-4`} aria-labelledby="account-heading">
           <div className="flex items-center justify-between gap-3">
             <h2 id="account-heading" className="font-bold">Account details</h2>
-            <button type="button" onClick={toggleActive} disabled={busy} className={ghostClass}>
-              <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
-              {manager.active ? "Switch off" : "Switch on"}
-            </button>
-          </div>
-          <dl className="grid gap-3 text-sm">
-            <Row label="Full name" value={manager.name} />
-            <Row label="Gmail address" value={manager.email} />
-            <Row label="Role" value="Manager" />
-            <Row label="Status" value={manager.active ? "Active" : "Switched off"} />
-            <Row label="Added" value={formatDateTime(manager.createdAt)} />
-          </dl>
-
-          <div className="border-t border-zinc-800 pt-4">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-zinc-200">Areas this manager can work on</p>
-              {!editingAreas && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAreaDraft(manager.responsibilities);
-                    setEditingAreas(true);
-                  }}
-                  className={ghostClass}
-                >
-                  <Pencil className="h-4 w-4 text-orange-500" aria-hidden="true" />
-                  Edit areas
-                </button>
-              )}
-            </div>
-            {editingAreas ? (
-              <div className="mt-3 flex flex-col gap-4">
-                <AreaCheckboxes selected={areaDraft} onChange={setAreaDraft} idPrefix={`manager-areas-${manager.id}`} />
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={saveAreas} disabled={busy} className={primaryClass}>
-                    {busy ? "Saving…" : "Save areas"}
-                  </button>
-                  <button type="button" onClick={() => setEditingAreas(false)} className={ghostClass}>
-                    <X className="h-4 w-4" aria-hidden="true" />
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {manager.responsibilities.map((area) => (
-                  <Pill key={area} tone="orange">
-                    {RESPONSIBILITY_LABELS[area]}
-                  </Pill>
-                ))}
-              </div>
+            {!isSelf && (
+              <button type="button" onClick={toggleActive} disabled={busy} className={ghostClass}>
+                <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
+                {owner.active ? "Switch off" : "Switch on"}
+              </button>
             )}
           </div>
+          <dl className="grid gap-3 text-sm">
+            <Row label="Full name" value={owner.name} />
+            <Row label="Gmail address" value={owner.email} />
+            <Row label="Role" value="Owner" />
+            <Row label="Status" value={owner.active ? "Active" : "Switched off"} />
+            <Row label="Added" value={formatDateTime(owner.createdAt)} />
+          </dl>
         </section>
 
         {/* Office */}
@@ -250,7 +201,7 @@ function ManagerContent({
               <Row label="Address" value={office.address || "Not provided"} />
             </dl>
           ) : (
-            <p className="text-sm text-amber-300">This manager is not assigned to an office yet. Choose one below.</p>
+            <p className="text-sm text-amber-300">This owner is not assigned to an office yet. Choose one below.</p>
           )}
 
           <div className="border-t border-zinc-800 pt-4">
@@ -277,7 +228,7 @@ function ManagerContent({
                     ))}
                   </select>
                 </div>
-                <button type="button" onClick={saveOffice} disabled={busy || officeDraft === (manager.officeId ?? "")} className={primaryClass}>
+                <button type="button" onClick={saveOffice} disabled={busy || officeDraft === (owner.officeId ?? "")} className={primaryClass}>
                   Save office
                 </button>
               </div>
@@ -286,12 +237,12 @@ function ManagerContent({
         </section>
       </div>
 
-      <TeamPanel managerId={manager.id} staff={staff} managers={managers} setNotice={setNotice} reload={reload} />
+      <TeamPanel ownerId={owner.id} staff={staff} owners={owners} setNotice={setNotice} reload={reload} />
 
       <section className={`${panelClass} flex flex-col gap-4`} aria-labelledby="activity-heading">
         <h2 id="activity-heading" className="font-bold">Activity history</h2>
         {activity.length === 0 ? (
-          <p className="text-sm text-zinc-400">No activity yet. Changes to this manager and their team appear here.</p>
+          <p className="text-sm text-zinc-400">No activity yet. Changes to this owner and their team appear here.</p>
         ) : (
           <ol className="flex flex-col divide-y divide-zinc-800">
             {activity.map((entry) => (
@@ -320,21 +271,21 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function TeamPanel({
-  managerId,
+  ownerId,
   staff,
-  managers,
+  owners,
   setNotice,
   reload,
 }: {
-  managerId: string;
+  ownerId: string;
   staff: TeamMemberView[];
-  managers: ManagerView[];
+  owners: OwnerView[];
   setNotice: (n: Notice) => void;
   reload: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<{ name: string; jobRole: StaffJobRole }>({ name: "", jobRole: STAFF_JOB_ROLES[0] });
+  const [editName, setEditName] = useState("");
   const [moveTo, setMoveTo] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -352,7 +303,7 @@ function TeamPanel({
   };
 
   const saveEdit = async (member: TeamMemberView) => {
-    if (await patchStaff(member, { name: editDraft.name, jobRole: editDraft.jobRole }, `${member.name}'s details were saved.`)) {
+    if (await patchStaff(member, { name: editName }, `${member.name}'s details were saved.`)) {
       setEditingId(null);
     }
   };
@@ -366,11 +317,11 @@ function TeamPanel({
   const moveStaff = async (member: TeamMemberView) => {
     const target = moveTo[member.id];
     if (!target) {
-      setNotice({ tone: "error", text: "Choose a manager to move this staff member to." });
+      setNotice({ tone: "error", text: "Choose an owner to move this staff member to." });
       return;
     }
-    const manager = managers.find((m) => m.id === target);
-    if (await patchStaff(member, { managerId: target }, `${member.name} was moved to ${manager?.name ?? "another manager"}.`)) {
+    const owner = owners.find((m) => m.id === target);
+    if (await patchStaff(member, { ownerId: target }, `${member.name} was moved to ${owner?.name ?? "another owner"}.`)) {
       setMoveTo((prev) => ({ ...prev, [member.id]: "" }));
     }
   };
@@ -379,7 +330,7 @@ function TeamPanel({
     <section className={`${panelClass} flex flex-col gap-5`} aria-labelledby="team-heading">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="team-heading" className="font-bold">
-          Staff under this manager <span className="text-zinc-500">({staff.length})</span>
+          Staff under this owner <span className="text-zinc-500">({staff.length})</span>
         </h2>
         {!adding && (
           <button type="button" onClick={() => setAdding(true)} className={primaryClass}>
@@ -391,7 +342,7 @@ function TeamPanel({
 
       {adding && (
         <AddStaffForm
-          managerId={managerId}
+          ownerId={ownerId}
           onCancel={() => setAdding(false)}
           onCreated={(name) => {
             setAdding(false);
@@ -402,43 +353,25 @@ function TeamPanel({
       )}
 
       {staff.length === 0 && !adding && (
-        <p className="text-sm text-zinc-400">No staff work under this manager yet. Use Add staff to create a team member.</p>
+        <p className="text-sm text-zinc-400">No staff work under this owner yet. Use Add staff to create a team member.</p>
       )}
 
       {staff.length > 0 && (
         <ul className="flex flex-col gap-3">
           {staff.map((member) => {
             const editing = editingId === member.id;
-            const otherManagers = managers;
+            const otherOwners = owners;
             return (
               <li key={member.id} className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-black/40 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-bold">{member.name}</p>
-                  <Pill tone="zinc">{member.jobRole ?? "No role"}</Pill>
                   <Pill tone={member.active ? "green" : "red"}>{member.active ? "Active" : "Switched off"}</Pill>
                   <span className="text-xs text-zinc-500">Added {formatDateTime(member.createdAt)}</span>
                 </div>
 
                 {editing ? (
-                  <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                    <input
-                      aria-label="Staff name"
-                      value={editDraft.name}
-                      onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                      className={fieldClass}
-                    />
-                    <select
-                      aria-label="Job role"
-                      value={editDraft.jobRole}
-                      onChange={(e) => setEditDraft((d) => ({ ...d, jobRole: e.target.value as StaffJobRole }))}
-                      className={fieldClass}
-                    >
-                      {STAFF_JOB_ROLES.map((role) => (
-                        <option key={role} value={role}>
-                          {role}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <input aria-label="Staff name" value={editName} onChange={(e) => setEditName(e.target.value)} className={fieldClass} />
                     <div className="flex gap-2">
                       <button type="button" onClick={() => saveEdit(member)} disabled={busyId === member.id} className={primaryClass}>
                         Save
@@ -453,7 +386,7 @@ function TeamPanel({
                     <button
                       type="button"
                       onClick={() => {
-                        setEditDraft({ name: member.name, jobRole: member.jobRole ?? STAFF_JOB_ROLES[0] });
+                        setEditName(member.name);
                         setEditingId(member.id);
                       }}
                       className={ghostClass}
@@ -472,17 +405,17 @@ function TeamPanel({
                   <div className="flex flex-col gap-2 border-t border-zinc-800 pt-3 sm:flex-row sm:items-end">
                     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                       <label htmlFor={`move-${member.id}`} className="text-xs font-semibold text-zinc-400">
-                        Assign to another manager
+                        Assign to another owner
                       </label>
                       <select
                         id={`move-${member.id}`}
                         value={moveTo[member.id] ?? ""}
                         onChange={(e) => setMoveTo((prev) => ({ ...prev, [member.id]: e.target.value }))}
-                        disabled={otherManagers.length === 0}
+                        disabled={otherOwners.length === 0}
                         className={fieldClass}
                       >
-                        <option value="">{otherManagers.length === 0 ? "No other managers" : "Choose a manager"}</option>
-                        {otherManagers.map((m) => (
+                        <option value="">{otherOwners.length === 0 ? "No other owners" : "Choose an owner"}</option>
+                        {otherOwners.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.name}
                           </option>
@@ -503,9 +436,8 @@ function TeamPanel({
   );
 }
 
-function AddStaffForm({ managerId, onCancel, onCreated }: { managerId: string; onCancel: () => void; onCreated: (name: string) => void }) {
+function AddStaffForm({ ownerId, onCancel, onCreated }: { ownerId: string; onCancel: () => void; onCreated: (name: string) => void }) {
   const [name, setName] = useState("");
-  const [jobRole, setJobRole] = useState<StaffJobRole | "">("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -515,14 +447,12 @@ function AddStaffForm({ managerId, onCancel, onCreated }: { managerId: string; o
     e.preventDefault();
     const found: Record<string, string> = {};
     if (!name.trim()) found.name = "Enter the staff member's name.";
-    if (!jobRole) found.jobRole = "Choose the job role.";
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 
     setPending(true);
-    const result = await customerRequest<{ staff: TeamMemberView }>(`/api/admin/managers/${encodeURIComponent(managerId)}/staff`, "POST", {
+    const result = await customerRequest<{ staff: TeamMemberView }>(`/api/admin/owners/${encodeURIComponent(ownerId)}/staff`, "POST", {
       name,
-      jobRole,
       phone,
       email,
     });
@@ -547,26 +477,6 @@ function AddStaffForm({ managerId, onCancel, onCreated }: { managerId: string; o
           </label>
           <input id="staff-name" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={Boolean(errors.name)} className={fieldClass} />
           {errors.name && <p className="text-xs text-red-300">{errors.name}</p>}
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="staff-job-role" className="text-sm font-semibold text-zinc-200">
-            Job role
-          </label>
-          <select
-            id="staff-job-role"
-            value={jobRole}
-            onChange={(e) => setJobRole(e.target.value as StaffJobRole | "")}
-            aria-invalid={Boolean(errors.jobRole)}
-            className={fieldClass}
-          >
-            <option value="">Choose a role</option>
-            {STAFF_JOB_ROLES.map((role) => (
-              <option key={role} value={role}>
-                {role}
-              </option>
-            ))}
-          </select>
-          {errors.jobRole && <p className="text-xs text-red-300">{errors.jobRole}</p>}
         </div>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="staff-phone" className="text-sm font-semibold text-zinc-200">

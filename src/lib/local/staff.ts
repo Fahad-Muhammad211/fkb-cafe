@@ -1,8 +1,8 @@
 import { canAccess, type Permission } from "@/lib/permissions";
 import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
 
-// Server-side role check for admin API routes. Every admin route calls this before it reads or
-// changes anything, so a manager cannot reach an area they were not given.
+// Sign-in check for admin API routes. Every admin route calls this before it reads or changes
+// anything, so only a signed-in, active owner can reach the admin data.
 
 export type StaffCheck = { ok: true; session: StaffSession } | { ok: false; status: 401 | 403; error: string };
 

@@ -1,6 +1,6 @@
 import { AdminHomeGate } from "@/components/admin/AdminHomeGate";
 
-// Owners see the finance dashboard. Managers see a home page with only their own areas.
+// Owners see the finance dashboard.
 // Session-dependent admin page; see the note in (protected)/layout.tsx.
 export const instant = false;
 

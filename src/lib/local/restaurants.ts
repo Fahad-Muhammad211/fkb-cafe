@@ -4,16 +4,17 @@ import { findAdminAccount } from "@/lib/local/adminAccounts";
 import { isAllowedImageUrl } from "@/lib/imageUpload";
 
 // Restaurants. Each restaurant keeps its own orders, staff attendance, grocery, purchases and riders,
-// all linked by restaurantId. A restaurant is run by one manager, and a manager runs at most one
-// restaurant, so each restaurant's staff list (the manager's team) is unambiguous.
+// all linked by restaurantId. A restaurant is run by one owner, and an owner runs at most one
+// restaurant, so each restaurant's staff list (the owner's team) is unambiguous.
+// The stored field is still called "managerId" so restaurants saved before the single owner role are kept.
 
 export interface Restaurant {
   id: string;
   name: string;
   area: string;
   logo: string;
-  managerId: string | null;
-  managerName: string | null;
+  ownerId: string | null;
+  ownerName: string | null;
   createdAt: string;
 }
 
@@ -36,9 +37,9 @@ const restaurantsCollection = () =>
 
 const nameKeyOf = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
 
-async function managerNameOf(managerId: string | null): Promise<string | null> {
-  if (!managerId) return null;
-  return (await findAdminAccount(managerId))?.name ?? null;
+async function ownerNameOf(ownerId: string | null): Promise<string | null> {
+  if (!ownerId) return null;
+  return (await findAdminAccount(ownerId))?.name ?? null;
 }
 
 async function toRestaurant(doc: RestaurantDoc): Promise<Restaurant> {
@@ -47,8 +48,8 @@ async function toRestaurant(doc: RestaurantDoc): Promise<Restaurant> {
     name: doc.name,
     area: doc.area,
     logo: doc.logo,
-    managerId: doc.managerId,
-    managerName: await managerNameOf(doc.managerId),
+    ownerId: doc.managerId,
+    ownerName: await ownerNameOf(doc.managerId),
     createdAt: doc.createdAt,
   };
 }
@@ -73,12 +74,12 @@ export async function createRestaurant(input: {
   name: unknown;
   area: unknown;
   logo: unknown;
-  managerId: unknown;
+  ownerId: unknown;
 }): Promise<RestaurantResult<Restaurant>> {
   const name = typeof input.name === "string" ? input.name.trim().replace(/\s+/g, " ") : "";
   const area = typeof input.area === "string" ? input.area.trim().replace(/\s+/g, " ") : "";
   const logo = typeof input.logo === "string" ? input.logo.trim() : "";
-  const managerId = typeof input.managerId === "string" && input.managerId ? input.managerId : null;
+  const ownerId = typeof input.ownerId === "string" && input.ownerId ? input.ownerId : null;
   const errors: Record<string, string> = {};
   if (name.length < 2) errors.name = "Enter the restaurant name (at least 2 characters).";
   else if (name.length > 80) errors.name = "Keep the restaurant name to 80 characters or fewer.";
@@ -86,12 +87,12 @@ export async function createRestaurant(input: {
   else if (area.length > 120) errors.area = "Keep the area to 120 characters or fewer.";
   if (logo && !isAllowedImageUrl(logo)) errors.logo = "Use an image file or an https link to the logo.";
 
-  if (managerId) {
-    const manager = await findAdminAccount(managerId);
-    if (!manager || manager.role !== "manager") errors.managerId = "Choose a manager.";
+  if (ownerId) {
+    const owner = await findAdminAccount(ownerId);
+    if (!owner) errors.ownerId = "Choose an owner.";
     else {
-      const all = await (await restaurantsCollection()).find({ managerId }).limit(1).toArray();
-      if (all.length > 0) errors.managerId = "This manager already runs another restaurant.";
+      const all = await (await restaurantsCollection()).find({ managerId: ownerId }).limit(1).toArray();
+      if (all.length > 0) errors.ownerId = "This owner already runs another restaurant.";
     }
   }
   if (Object.keys(errors).length > 0) return { ok: false, status: 400, error: "Please correct the highlighted fields.", errors };
@@ -102,7 +103,7 @@ export async function createRestaurant(input: {
     nameKey: nameKeyOf(name),
     area,
     logo,
-    managerId,
+    managerId: ownerId,
     createdAt: new Date().toISOString(),
   };
   try {
