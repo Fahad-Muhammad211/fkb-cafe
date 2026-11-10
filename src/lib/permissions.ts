@@ -28,6 +28,5 @@ export const SECTIONS: { href: string; label: string; permission: Permission }[]
   { href: "/admin/products", label: "Products", permission: "menu" },
   { href: "/admin/analytics", label: "Analytics", permission: "finance" },
   { href: "/admin/employees", label: "Employees", permission: "staff" },
-  { href: "/admin/offices", label: "Offices", permission: "staff" },
   { href: "/admin/restaurants", label: "Restaurants", permission: "staff" },
 ];

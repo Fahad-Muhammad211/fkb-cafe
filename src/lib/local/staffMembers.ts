@@ -1,7 +1,6 @@
 import { getCollection } from "@/lib/local/collections";
 import { randomHex } from "@/lib/local/random";
-import { findAdminAccount, type StaffMember as OwnerMember } from "@/lib/local/adminAccounts";
-import { findOffice, type Office } from "@/lib/local/offices";
+import { findAdminAccount, findStaffMember, type StaffMember as OwnerMember } from "@/lib/local/adminAccounts";
 import { listActivityFor, logActivity, type ActivityEntry, type Actor } from "@/lib/local/activity";
 import { isValidName } from "@/lib/validation";
 
@@ -44,8 +43,8 @@ function contactErrors(phone: string, email: string): Record<string, string> {
 }
 
 export interface OwnerDetails {
+  // Includes the restaurant this owner belongs to (restaurantId and restaurantName).
   owner: OwnerMember;
-  office: Office | null;
   staff: TeamMember[];
   activity: ActivityEntry[];
 }
@@ -69,22 +68,11 @@ const toTeamMember = (doc: TeamDoc): TeamMember => ({
 
 // Full details for one owner. Returns null when there is no account with this ID.
 export async function getOwnerDetails(ownerId: string): Promise<OwnerDetails | null> {
-  const account = await findAdminAccount(ownerId);
-  if (!account) return null;
-  const office = account.officeId ? await findOffice(account.officeId) : null;
+  const owner = await findStaffMember(ownerId);
+  if (!owner) return null;
   const staffDocs = await (await teamCollection()).find({ managerId: ownerId }).sort({ name: 1 }).limit(500).toArray();
   return {
-    owner: {
-      id: account.id,
-      name: account.name,
-      email: account.email,
-      role: account.role,
-      active: account.active,
-      createdAt: account.createdAt,
-      officeId: account.officeId,
-      officeName: account.officeName,
-    },
-    office,
+    owner,
     staff: staffDocs.map(toTeamMember),
     activity: await listActivityFor(ownerId),
   };

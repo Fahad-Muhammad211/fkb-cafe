@@ -1,6 +1,6 @@
 import { getCollection, isDuplicateKeyError } from "@/lib/local/collections";
 import { randomHex } from "@/lib/local/random";
-import { findAdminAccount } from "@/lib/local/adminAccounts";
+import { findAdminAccount, setOwnerRestaurant } from "@/lib/local/adminAccounts";
 import { isAllowedImageUrl } from "@/lib/imageUpload";
 
 // Restaurants. Each restaurant keeps its own orders, staff attendance, grocery, purchases and riders,
@@ -112,5 +112,7 @@ export async function createRestaurant(input: {
     if (isDuplicateKeyError(err)) return { ok: false, status: 400, error: "Please correct the highlighted fields.", errors: { name: "A restaurant with this name already exists." } };
     throw err;
   }
+  // The owner who runs the restaurant belongs to it.
+  if (ownerId) await setOwnerRestaurant(ownerId, doc._id);
   return { ok: true, value: await toRestaurant(doc) };
 }

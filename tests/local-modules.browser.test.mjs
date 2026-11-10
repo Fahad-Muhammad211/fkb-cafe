@@ -190,8 +190,34 @@ test("a menu item can be added to the cart and the cart keeps it across reloads"
   }
 });
 
-test("owner creates offices and other owners, manages a team, and every owner can open every team", async () => {
+test("owner adds other owners to restaurants, manages a team, and every owner can open every team", async () => {
   const { context, page, problems } = await openPage();
+  const api = (method, url, body) =>
+    page.evaluate(
+      async ({ method, url, body }) => {
+        const res = await fetch(url, {
+          method,
+          credentials: "same-origin",
+          headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        return { status: res.status, data: await res.json().catch(() => null) };
+      },
+      { method, url, body },
+    );
+  // Fills the Add owner form on the Employees page and submits it.
+  const addOwner = async (name, email, restaurantLabel) => {
+    await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("button", { name: "Add owner" }).click();
+    await page.locator("#owner-name").fill(name);
+    await page.locator("#owner-email").fill(email);
+    await page.locator("#owner-password").fill("Passw0rd!");
+    await page.locator("#owner-confirm").fill("Passw0rd!");
+    await page.locator("#owner-restaurantId").selectOption({ label: restaurantLabel });
+    await page.getByRole("button", { name: "Add owner" }).click();
+    await page.getByRole("link", { name }).first().waitFor({ timeout: 15000 });
+  };
   try {
     // Owner account (the first admin).
     await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
@@ -202,42 +228,72 @@ test("owner creates offices and other owners, manages a team, and every owner ca
     await page.locator("#admin-signup-confirm").fill("Passw0rd!");
     await page.getByRole("button", { name: /create|sign up|submit/i }).first().click();
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
-
-    // Offices: create two, and refuse a duplicate name that differs only in case and spacing.
-    await page.goto(`${base}/admin/offices`, { waitUntil: "load" });
     await settle(page);
-    await page.locator("#office-name").fill("Main Branch");
-    await page.locator("#office-address").fill("1 Main Road");
-    await page.getByRole("button", { name: "Add office" }).click();
-    await page.getByText("Main Branch", { exact: true }).waitFor({ timeout: 15000 });
-    await page.locator("#office-name").fill("  main   branch ");
-    await page.getByRole("button", { name: "Add office" }).click();
-    await page.getByText("An office with this name already exists.").waitFor({ timeout: 15000 });
-    await page.locator("#office-name").fill("Gulberg Branch");
-    await page.getByRole("button", { name: "Add office" }).click();
-    await page.getByText("Gulberg Branch", { exact: true }).waitFor({ timeout: 15000 });
 
-    // Another owner, created from the Employees page with an office from the dropdown. There is no role choice.
+    // The Offices section is gone: no sidebar link, no page, no data route.
+    const nav = page.getByRole("navigation", { name: "Admin" }).first();
+    await nav.getByRole("link", { name: "Restaurants" }).waitFor({ state: "attached" });
+    assert.equal(await nav.getByRole("link", { name: "Offices" }).count(), 0, "the sidebar still links to Offices");
+    assert.equal((await page.goto(`${base}/admin/offices`, { waitUntil: "load" }))?.status(), 404);
+    assert.equal((await api("GET", "/api/admin/offices")).status, 404);
+    // Those 404s are expected; the browser logs them as console errors.
+    problems.length = 0;
+
+    // With no restaurants, an owner cannot be added.
     await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
     await settle(page);
     await page.getByRole("button", { name: "Add owner" }).click();
     assert.equal(await page.locator("#manager-role, #owner-role").count(), 0, "a role dropdown is still shown");
-    await page.locator("#owner-name").fill("Asad Owner");
-    await page.locator("#owner-email").fill("owner.test2b@gmail.com");
+    await page.getByText("Create a restaurant first on the").waitFor({ timeout: 15000 });
+    assert.ok(await page.getByRole("button", { name: "Add owner" }).isDisabled());
+
+    // Two restaurants without an owner, created on the Restaurants page's data route.
+    for (const [name, area] of [["Main Branch", "Mall Road"], ["Gulberg Branch", "Gulberg III"]]) {
+      assert.equal((await api("POST", "/api/admin/restaurants", { name, area, logo: "", ownerId: null })).status, 201);
+    }
+    const restaurants = (await api("GET", "/api/admin/restaurants")).data.restaurants;
+    const mainId = restaurants.find((r) => r.name === "Main Branch").id;
+    const gulbergId = restaurants.find((r) => r.name === "Gulberg Branch").id;
+
+    // The dropdown lists every restaurant, and a restaurant must be chosen.
+    await page.reload({ waitUntil: "load" });
+    await settle(page);
+    await page.getByRole("button", { name: "Add owner" }).click();
+    const options = await page.locator("#owner-restaurantId option").allTextContents();
+    assert.deepEqual(options, ["Choose a restaurant", "Gulberg Branch — Gulberg III", "Main Branch — Mall Road"]);
+    await page.locator("#owner-name").fill("No Restaurant");
+    await page.locator("#owner-email").fill("owner.none@gmail.com");
     await page.locator("#owner-password").fill("Passw0rd!");
     await page.locator("#owner-confirm").fill("Passw0rd!");
-    await page.locator("#owner-officeId").selectOption({ label: "Main Branch" });
     await page.getByRole("button", { name: "Add owner" }).click();
-    await page.getByRole("link", { name: "Asad Owner" }).first().waitFor({ timeout: 15000 });
+    await page.getByText("Choose the restaurant this owner belongs to.").waitFor({ timeout: 15000 });
+    const noRestaurant = await api("POST", "/api/admin/accounts", { name: "No Restaurant", email: "owner.none@gmail.com", password: "Passw0rd!", confirm: "Passw0rd!" });
+    assert.equal(noRestaurant.status, 400);
+    assert.match(noRestaurant.data.errors.restaurantId, /Choose the restaurant/);
+    const badRestaurant = await api("POST", "/api/admin/accounts", { name: "No Restaurant", email: "owner.none@gmail.com", password: "Passw0rd!", confirm: "Passw0rd!", restaurantId: "rest-missing" });
+    assert.equal(badRestaurant.status, 400);
+
+    // Another owner, created from the Employees page for Main Branch. There is no role choice.
+    await addOwner("Asad Owner", "owner.test2b@gmail.com", "Main Branch — Mall Road");
     await page.getByText("Main Branch", { exact: true }).first().waitFor();
 
-    // Owner details page.
+    // Owner details page shows the restaurant.
     await page.getByRole("link", { name: "Asad Owner" }).first().click();
     await page.waitForURL(/\/admin\/employees\/admin-/, { timeout: 20000 });
     await settle(page);
     const asadId = new URL(page.url()).pathname.split("/").pop();
     await page.getByRole("heading", { name: "Asad Owner" }).waitFor();
+    const restaurantPanel = page.locator('section[aria-labelledby="restaurant-heading"]');
+    await restaurantPanel.getByText("Main Branch", { exact: true }).waitFor({ timeout: 15000 });
+    await restaurantPanel.getByText("Mall Road", { exact: true }).waitFor();
+    await page.getByText("Restaurant: Main Branch.").waitFor();
     await page.getByText("Staff under this owner (0)").waitFor();
+
+    // Saved with the account, and linked: Main Branch had no owner, so Asad now runs it.
+    const storedAsad = await page.evaluate((id) => JSON.parse(localStorage.getItem("meg-local:admins")).find((d) => d._id === id), asadId);
+    assert.equal(storedAsad.restaurantId, mainId);
+    const mainAfter = (await api("GET", "/api/admin/restaurants")).data.restaurants.find((r) => r.id === mainId);
+    assert.equal(mainAfter.ownerName, "Asad Owner");
 
     // Staff under this owner. There is no job title field.
     await page.getByRole("button", { name: "Add staff" }).click();
@@ -249,23 +305,41 @@ test("owner creates offices and other owners, manages a team, and every owner ca
     await team().getByText("Ali Cashier", { exact: true }).waitFor({ timeout: 15000 });
     await page.getByText("Staff added", { exact: true }).waitFor();
 
-    // Reassign the owner's office.
-    await page.locator("#reassign-office").selectOption({ label: "Gulberg Branch" });
-    await page.getByRole("button", { name: "Save office" }).click();
-    await page.getByText("Office was saved.").waitFor({ timeout: 15000 });
-    await page.getByText("Office changed", { exact: true }).waitFor();
+    // Asad runs Main Branch, so he cannot be moved to another restaurant.
+    await page.locator("#reassign-restaurant").selectOption({ label: "Gulberg Branch — Gulberg III" });
+    await page.getByRole("button", { name: "Save restaurant" }).click();
+    await page.getByText("Asad Owner runs Main Branch, so they belong to that restaurant.").waitFor({ timeout: 15000 });
 
-    // A second added owner in Gulberg.
+    // Main Branch's page lists Asad and his staff.
+    await page.goto(`${base}/admin/restaurants/${mainId}`, { waitUntil: "load" });
+    await settle(page);
+    await page.getByText("Owners of this restaurant:").waitFor({ timeout: 15000 });
+    await page.getByRole("link", { name: "Asad Owner" }).waitFor();
+    await page.getByRole("region", { name: "Staff list" }).getByText("Ali Cashier").waitFor();
+
+    // A second added owner in Gulberg, and a third who joins Main Branch, which already has an owner.
+    await addOwner("Bilal Owner", "owner.test3@gmail.com", "Gulberg Branch — Gulberg III");
+    await addOwner("Cara Owner", "owner.test4@gmail.com", "Main Branch — Mall Road");
+    const staffList = (await api("GET", "/api/admin/employees")).data.staff;
+    const cara = staffList.find((m) => m.name === "Cara Owner");
+    assert.equal(cara.restaurantId, mainId);
+    assert.equal((await api("GET", "/api/admin/restaurants")).data.restaurants.find((r) => r.id === mainId).ownerName, "Asad Owner", "the restaurant's owner changed");
+
+    // Cara does not run a restaurant, so she can move to Gulberg.
+    await page.goto(`${base}/admin/employees/${cara.id}`, { waitUntil: "load" });
+    await settle(page);
+    await page.locator("#reassign-restaurant").selectOption({ label: "Gulberg Branch — Gulberg III" });
+    await page.getByRole("button", { name: "Save restaurant" }).click();
+    await page.getByText("Restaurant was saved.").waitFor({ timeout: 15000 });
+    await page.getByText("Restaurant changed", { exact: true }).waitFor();
+    await page.getByText("Main Branch → Gulberg Branch").waitFor();
+    const gulbergDetail = await api("GET", `/api/admin/restaurants/${gulbergId}`);
+    assert.deepEqual(gulbergDetail.data.owners.map((o) => o.name).sort(), ["Bilal Owner", "Cara Owner"]);
+    const mainDetail = await api("GET", `/api/admin/restaurants/${mainId}`);
+    assert.deepEqual(mainDetail.data.owners.map((o) => o.name), ["Asad Owner"]);
+
     await page.goto(`${base}/admin/employees`, { waitUntil: "load" });
     await settle(page);
-    await page.getByRole("button", { name: "Add owner" }).click();
-    await page.locator("#owner-name").fill("Bilal Owner");
-    await page.locator("#owner-email").fill("owner.test3@gmail.com");
-    await page.locator("#owner-password").fill("Passw0rd!");
-    await page.locator("#owner-confirm").fill("Passw0rd!");
-    await page.locator("#owner-officeId").selectOption({ label: "Gulberg Branch" });
-    await page.getByRole("button", { name: "Add owner" }).click();
-    await page.getByRole("link", { name: "Bilal Owner" }).first().waitFor({ timeout: 15000 });
     await page.getByRole("link", { name: "Bilal Owner" }).first().click();
     await page.waitForURL(/\/admin\/employees\/admin-/, { timeout: 20000 });
     await settle(page);
@@ -348,34 +422,46 @@ test("owner manages restaurants: cards, separate detail data, records and live r
     // The sidebar links to Restaurants.
     await page.getByRole("navigation", { name: "Admin" }).getByRole("link", { name: "Restaurants" }).first().waitFor({ state: "attached" });
 
-    // Two more owners, each with one staff member, set up through the existing APIs.
-    const office = await api("POST", "/api/admin/offices", { name: "Head Office", address: "1 Mall Road Lahore" });
-    assert.equal(office.status, 201);
-    const makeOwner = async (name, email) => {
-      const r = await api("POST", "/api/admin/accounts", { name, email, password: "Passw0rd!", confirm: "Passw0rd!", officeId: office.data.office.id });
-      assert.equal(r.status, 201, JSON.stringify(r.data));
-      assert.equal(r.data.account.role, "owner");
-      return r.data.account.id;
-    };
-    const ownerA = await makeOwner("Ayesha Owner", "owner.resta@gmail.com");
-    const ownerB = await makeOwner("Bilal Owner", "owner.restb@gmail.com");
-    assert.equal((await api("POST", `/api/admin/owners/${ownerA}/staff`, { name: "Kamran Cook", phone: "03001112233" })).status, 201);
-    assert.equal((await api("POST", `/api/admin/owners/${ownerB}/staff`, { name: "Zara Cashier" })).status, 201);
-
-    // Empty state, then create restaurant A from the form.
+    // Empty state.
     await page.goto(`${base}/admin/restaurants`, { waitUntil: "load" });
     await settle(page);
     await page.getByText("No restaurants yet").waitFor({ timeout: 15000 });
+
+    // Restaurant B through the API, with no owner yet.
+    const restB = await api("POST", "/api/admin/restaurants", { name: "DHA Diner", area: "DHA Phase 5", logo: "", ownerId: null });
+    assert.equal(restB.status, 201);
+    const restBId = restB.data.restaurant.id;
+
+    // Two more owners, added for restaurant B, each with one staff member. The first one added to a
+    // restaurant without an owner runs it; the second only belongs to it.
+    const makeOwner = async (name, email) => {
+      const r = await api("POST", "/api/admin/accounts", { name, email, password: "Passw0rd!", confirm: "Passw0rd!", restaurantId: restBId });
+      assert.equal(r.status, 201, JSON.stringify(r.data));
+      assert.equal(r.data.account.role, "owner");
+      assert.equal(r.data.account.restaurantId, restBId);
+      assert.equal(r.data.account.restaurantName, "DHA Diner");
+      return r.data.account.id;
+    };
+    const ownerB = await makeOwner("Bilal Owner", "owner.restb@gmail.com");
+    const ownerA = await makeOwner("Ayesha Owner", "owner.resta@gmail.com");
+    assert.equal((await api("POST", `/api/admin/owners/${ownerA}/staff`, { name: "Kamran Cook", phone: "03001112233" })).status, 201);
+    assert.equal((await api("POST", `/api/admin/owners/${ownerB}/staff`, { name: "Zara Cashier" })).status, 201);
+    assert.equal((await api("GET", `/api/admin/restaurants/${restBId}`)).data.restaurant.ownerId, ownerB);
+
+    // Create restaurant A from the form, run by Ayesha. She now belongs to restaurant A.
+    await page.reload({ waitUntil: "load" });
+    await settle(page);
     await page.getByRole("button", { name: "Add restaurant" }).click();
     await page.locator("#restaurant-name").fill("Gulberg Grill");
     await page.locator("#restaurant-area").fill("Gulberg, Lahore");
     await page.locator("#restaurant-owner").selectOption({ label: "Ayesha Owner" });
     await page.getByRole("button", { name: "Add restaurant" }).click();
     await page.getByText("Gulberg Grill was added.").waitFor({ timeout: 15000 });
+    const owners = (await api("GET", "/api/admin/employees")).data.staff;
+    assert.equal(owners.find((m) => m.id === ownerA).restaurantName, "Gulberg Grill");
+    assert.equal(owners.find((m) => m.id === ownerB).restaurantName, "DHA Diner");
 
-    // Restaurant B through the API; an owner cannot run two restaurants.
-    const restB = await api("POST", "/api/admin/restaurants", { name: "DHA Diner", area: "DHA Phase 5", logo: "", ownerId: ownerB });
-    assert.equal(restB.status, 201);
+    // An owner cannot run two restaurants.
     const dup = await api("POST", "/api/admin/restaurants", { name: "Other", area: "Johar Town", logo: "", ownerId: ownerA });
     assert.equal(dup.status, 400);
     assert.match(dup.data.errors.ownerId, /already runs/);
@@ -391,7 +477,6 @@ test("owner manages restaurants: cards, separate detail data, records and live r
 
     const list = await api("GET", "/api/admin/restaurants");
     const restA = list.data.restaurants.find((r) => r.name === "Gulberg Grill");
-    const restBId = restB.data.restaurant.id;
 
     // One delivery order per restaurant, placed through the real order endpoint.
     const catalog = await api("GET", "/api/catalog");
@@ -538,9 +623,11 @@ test("accounts saved with the old manager role are migrated to owner and keep th
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     await settle(page);
 
-    // An account with an office and a team member, then stored the way the old manager role was saved.
-    const office = await api("POST", "/api/admin/offices", { name: "Legacy Office", address: "" });
-    const created = await api("POST", "/api/admin/accounts", { name: "Legacy Person", email: "legacy.person@gmail.com", password: "Passw0rd!", confirm: "Passw0rd!", officeId: office.data.office.id });
+    // An account that runs a restaurant and has a team member, then stored the way the old manager role
+    // was saved: with an office and without the restaurant on the account record.
+    const restaurant = await api("POST", "/api/admin/restaurants", { name: "Legacy Kitchen", area: "Model Town", logo: "", ownerId: null });
+    assert.equal(restaurant.status, 201);
+    const created = await api("POST", "/api/admin/accounts", { name: "Legacy Person", email: "legacy.person@gmail.com", password: "Passw0rd!", confirm: "Passw0rd!", restaurantId: restaurant.data.restaurant.id });
     assert.equal(created.status, 201);
     const legacyId = created.data.account.id;
     assert.equal((await api("POST", `/api/admin/owners/${legacyId}/staff`, { name: "Kept Staff" })).status, 201);
@@ -549,10 +636,13 @@ test("accounts saved with the old manager role are migrated to owner and keep th
       const doc = docs.find((d) => d._id === id);
       doc.role = "manager";
       doc.responsibilities = ["orders"];
+      delete doc.restaurantId;
+      doc.officeId = "office-legacy";
+      doc.officeName = "Legacy Office";
       localStorage.setItem("meg-local:admins", JSON.stringify(docs));
     }, legacyId);
 
-    // Loading the app migrates the stored role. Name, email, password, office and team are kept.
+    // Loading the app migrates the stored role. Name, email, password, old office fields and team are kept.
     await page.reload({ waitUntil: "load" });
     await settle(page);
     const stored = await page.evaluate((id) => JSON.parse(localStorage.getItem("meg-local:admins")).find((d) => d._id === id), legacyId);
@@ -560,6 +650,11 @@ test("accounts saved with the old manager role are migrated to owner and keep th
     assert.equal(stored.name, "Legacy Person");
     assert.equal(stored.email, "legacy.person@gmail.com");
     assert.equal(stored.officeName, "Legacy Office");
+    // The owner is shown with the restaurant they run.
+    const legacyOwner = (await api("GET", "/api/admin/employees")).data.staff.find((m) => m.id === legacyId);
+    assert.equal(legacyOwner.restaurantName, "Legacy Kitchen");
+    // The first owner never chose a restaurant.
+    assert.equal((await api("GET", "/api/admin/employees")).data.staff.find((m) => m.id === "admin-initial").restaurantId, null);
 
     await api("DELETE", "/api/admin/session");
     await page.goto(`${base}/admin/login`, { waitUntil: "load" });

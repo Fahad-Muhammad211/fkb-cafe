@@ -17,16 +17,15 @@ interface StaffMember {
   role: StaffRole;
   active: boolean;
   createdAt: string;
-  officeId: string | null;
-  officeName: string | null;
+  restaurantId: string | null;
+  restaurantName: string | null;
 }
 
-// Same shape as Office in lib/local/offices.ts. Offices are created on the Offices page.
-export interface OfficeOption {
+// A restaurant from the Restaurants page (the fields of Restaurant in lib/local/restaurants.ts used here).
+export interface RestaurantOption {
   id: string;
   name: string;
-  address: string;
-  createdAt: string;
+  area: string;
 }
 
 export const fieldClass =
@@ -51,8 +50,8 @@ export function Pill({ tone, children }: { tone: "orange" | "zinc" | "red" | "gr
 
 export function EmployeesView({ currentId }: { currentId: string }) {
   const { data, error, loading, reload } = useCustomerData<{ staff: StaffMember[] }>("/api/admin/employees");
-  const officesState = useCustomerData<{ offices: OfficeOption[] }>("/api/admin/offices");
-  const offices = officesState.data?.offices ?? [];
+  const restaurantsState = useCustomerData<{ restaurants: RestaurantOption[] }>("/api/admin/restaurants");
+  const restaurants = restaurantsState.data?.restaurants ?? [];
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -99,9 +98,9 @@ export function EmployeesView({ currentId }: { currentId: string }) {
 
       {adding && (
         <AddOwnerForm
-          offices={offices}
-          officesLoading={officesState.loading}
-          officesError={officesState.error}
+          restaurants={restaurants}
+          restaurantsLoading={restaurantsState.loading}
+          restaurantsError={restaurantsState.error}
           onCancel={() => setAdding(false)}
           onCreated={(name) => {
             setAdding(false);
@@ -133,7 +132,7 @@ export function EmployeesView({ currentId }: { currentId: string }) {
                       <Pill tone="orange">Owner</Pill>
                       {isSelf && <Pill tone="zinc">You</Pill>}
                       <Pill tone={member.active ? "green" : "red"}>{member.active ? "Active" : "Switched off"}</Pill>
-                      {member.officeName ? <Pill tone="orange">{member.officeName}</Pill> : <Pill tone="red">No office assigned</Pill>}
+                      {member.restaurantName ? <Pill tone="orange">{member.restaurantName}</Pill> : <Pill tone="red">No restaurant assigned</Pill>}
                     </div>
                     <p className="mt-1 break-all text-sm text-zinc-400">{member.email}</p>
                     <p className="mt-1 text-xs text-zinc-500">Added {new Date(member.createdAt).toLocaleDateString("en-GB", { dateStyle: "medium" })}</p>
@@ -167,23 +166,23 @@ export function EmployeesView({ currentId }: { currentId: string }) {
 }
 
 function AddOwnerForm({
-  offices,
-  officesLoading,
-  officesError,
+  restaurants,
+  restaurantsLoading,
+  restaurantsError,
   onCancel,
   onCreated,
 }: {
-  offices: OfficeOption[];
-  officesLoading: boolean;
-  officesError: string | null;
+  restaurants: RestaurantOption[];
+  restaurantsLoading: boolean;
+  restaurantsError: string | null;
   onCancel: () => void;
   onCreated: (name: string) => void;
 }) {
   const [values, setValues] = useState({ name: "", email: "", password: "", confirm: "" });
-  const [officeId, setOfficeId] = useState("");
+  const [restaurantId, setRestaurantId] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
-  const noOffices = !officesLoading && !officesError && offices.length === 0;
+  const noRestaurants = !restaurantsLoading && !restaurantsError && restaurants.length === 0;
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -194,14 +193,14 @@ function AddOwnerForm({
     const passwordError = isValidPassword(values.password);
     if (passwordError) found.password = passwordError;
     else if (values.confirm !== values.password) found.confirm = "Passwords do not match.";
-    if (!officeId) found.officeId = "Choose the office this owner works at.";
+    if (!restaurantId) found.restaurantId = "Choose the restaurant this owner belongs to.";
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 
     setPending(true);
     const result = await customerRequest<{ account: { name: string } }>("/api/admin/accounts", "POST", {
       ...values,
-      officeId,
+      restaurantId,
     });
     setPending(false);
     if (result.ok) {
@@ -247,39 +246,39 @@ function AddOwnerForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="owner-officeId" className="text-sm font-semibold text-zinc-200">
-          Office name
+        <label htmlFor="owner-restaurantId" className="text-sm font-semibold text-zinc-200">
+          Restaurant
         </label>
         <select
-          id="owner-officeId"
-          value={officeId}
-          onChange={(e) => setOfficeId(e.target.value)}
-          disabled={offices.length === 0}
-          aria-invalid={Boolean(errors.officeId)}
+          id="owner-restaurantId"
+          value={restaurantId}
+          onChange={(e) => setRestaurantId(e.target.value)}
+          disabled={restaurants.length === 0}
+          aria-invalid={Boolean(errors.restaurantId)}
           className={fieldClass}
         >
-          <option value="">{officesLoading ? "Loading offices…" : offices.length === 0 ? "No offices yet" : "Choose an office"}</option>
-          {offices.map((office) => (
-            <option key={office.id} value={office.id}>
-              {office.name}
+          <option value="">{restaurantsLoading ? "Loading restaurants…" : restaurants.length === 0 ? "No restaurants yet" : "Choose a restaurant"}</option>
+          {restaurants.map((restaurant) => (
+            <option key={restaurant.id} value={restaurant.id}>
+              {restaurant.name} — {restaurant.area}
             </option>
           ))}
         </select>
-        {officesError && <p className="text-xs text-red-300">{officesError}</p>}
-        {noOffices && (
+        {restaurantsError && <p className="text-xs text-red-300">{restaurantsError}</p>}
+        {noRestaurants && (
           <p className="text-xs text-amber-300">
-            Create an office first on the{" "}
-            <Link href="/admin/offices" className="underline hover:text-amber-200">
-              Offices page
+            Create a restaurant first on the{" "}
+            <Link href="/admin/restaurants" className="underline hover:text-amber-200">
+              Restaurants page
             </Link>
-            . Every owner added here must be assigned to an office.
+            . Every owner added here must belong to a restaurant.
           </p>
         )}
-        {errors.officeId && <p className="text-xs text-red-300">{errors.officeId}</p>}
+        {errors.restaurantId && <p className="text-xs text-red-300">{errors.restaurantId}</p>}
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button type="submit" disabled={pending || offices.length === 0} className={primaryClass}>
+        <button type="submit" disabled={pending || restaurants.length === 0} className={primaryClass}>
           <UserPlus className="h-4 w-4" aria-hidden="true" />
           {pending ? "Adding…" : "Add owner"}
         </button>

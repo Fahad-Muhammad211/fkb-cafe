@@ -3,7 +3,6 @@ import { isValidName, isValidPassword } from "@/lib/validation";
 import { getCollection, isDuplicateKeyError } from "@/lib/local/collections";
 import { hashPassword, passwordMatches } from "@/lib/local/passwords";
 import type { StaffRole } from "@/lib/permissions";
-import { findOffice } from "@/lib/local/offices";
 import { logActivity, type Actor } from "@/lib/local/activity";
 
 // Admin accounts live in the "admins" collection. Passwords are hashed with scrypt and never
@@ -11,8 +10,8 @@ import { logActivity, type Actor } from "@/lib/local/activity";
 //
 // Every account is an owner. Documents saved before roles existed have no role field, and documents
 // saved with the old "manager" role are read as owners too; migrateManagerAccounts() rewrites those
-// stored "manager" roles to "owner". Owners added from the Employees page are assigned to one office;
-// the office ID and name are saved on their record.
+// stored "manager" roles to "owner". Owners added from the Employees page belong to one restaurant
+// (created on the Restaurants page); the restaurant ID is saved on their record.
 
 export interface AdminAccount {
   id: string;
@@ -22,8 +21,6 @@ export interface AdminAccount {
   createdAt: string;
   role: StaffRole;
   active: boolean;
-  officeId: string | null;
-  officeName: string | null;
 }
 
 export interface StaffMember {
@@ -33,8 +30,8 @@ export interface StaffMember {
   role: StaffRole;
   active: boolean;
   createdAt: string;
-  officeId: string | null;
-  officeName: string | null;
+  restaurantId: string | null;
+  restaurantName: string | null;
 }
 
 type AdminDoc = {
@@ -47,9 +44,40 @@ type AdminDoc = {
   role?: StaffRole | "manager";
   active?: boolean;
   createdBy?: string;
+  // The restaurant this owner belongs to.
+  restaurantId?: string;
+  // Saved on owners added while offices existed. Offices were removed; these fields are kept on old
+  // records but are no longer read or written.
   officeId?: string;
   officeName?: string;
 };
+
+// The fields of a restaurant record this module needs. Read straight from the "restaurants" store
+// because lib/local/restaurants.ts imports this module. "managerId" is the owner who runs it.
+type RestaurantRef = { _id: string; name: string; managerId: string | null };
+
+const restaurantsCollection = () => getCollection<RestaurantRef>("restaurants");
+
+interface RestaurantLinks {
+  nameById: Map<string, string>;
+  // Owner ID → the restaurant that owner runs. An owner runs at most one restaurant.
+  runBy: Map<string, string>;
+}
+
+async function restaurantLinks(): Promise<RestaurantLinks> {
+  const docs = await (await restaurantsCollection()).find({}).limit(500).toArray();
+  const nameById = new Map(docs.map((d) => [d._id, d.name]));
+  const runBy = new Map<string, string>();
+  for (const d of docs) if (d.managerId) runBy.set(d.managerId, d._id);
+  return { nameById, runBy };
+}
+
+// The restaurant an owner belongs to: the one saved on their record, or, for owners saved before
+// restaurants were chosen here, the restaurant they run. A restaurant that no longer exists counts as none.
+function restaurantOf(doc: AdminDoc, links: RestaurantLinks): { restaurantId: string | null; restaurantName: string | null } {
+  const id = doc.restaurantId && links.nameById.has(doc.restaurantId) ? doc.restaurantId : (links.runBy.get(doc._id) ?? null);
+  return { restaurantId: id, restaurantName: id ? (links.nameById.get(id) ?? null) : null };
+}
 
 export type AccountErrors = Record<string, string>;
 
@@ -67,11 +95,9 @@ const toAccount = (doc: AdminDoc): AdminAccount => ({
   createdAt: doc.createdAt,
   role: "owner",
   active: doc.active !== false,
-  officeId: doc.officeId ?? null,
-  officeName: doc.officeName ?? null,
 });
 
-const toStaffMember = (doc: AdminDoc): StaffMember => {
+const toStaffMember = (doc: AdminDoc, links: RestaurantLinks): StaffMember => {
   const account = toAccount(doc);
   return {
     id: account.id,
@@ -80,8 +106,7 @@ const toStaffMember = (doc: AdminDoc): StaffMember => {
     role: account.role,
     active: account.active,
     createdAt: account.createdAt,
-    officeId: account.officeId,
-    officeName: account.officeName,
+    ...restaurantOf(doc, links),
   };
 };
 
@@ -105,7 +130,7 @@ export function validateAdminSignup(input: { name: string; email: string; passwo
 type NewAdminInput = { name: string; email: string; password: string; confirm: string };
 
 export type AdminCreateResult =
-  | { ok: true; account: Pick<AdminAccount, "id" | "name" | "email" | "role" | "officeId" | "officeName"> }
+  | { ok: true; account: Pick<StaffMember, "id" | "name" | "email" | "role" | "restaurantId" | "restaurantName"> }
   | { ok: false; errors: AccountErrors }
   | { ok: false; closed: true };
 
@@ -119,7 +144,7 @@ export async function hasAdminAccounts(): Promise<boolean> {
 }
 
 // Rewrites accounts stored with the old "manager" role as owners. Every other field (name, email,
-// password, office, status) is kept. Safe to run more than once.
+// password, restaurant, status) is kept. Safe to run more than once.
 export async function migrateManagerAccounts(): Promise<number> {
   const collection = await adminsCollection();
   const managers = await collection.find({ role: "manager" }).toArray();
@@ -132,7 +157,7 @@ export async function migrateManagerAccounts(): Promise<number> {
 async function insertAdmin(
   input: NewAdminInput,
   id: string,
-  access: { createdBy?: string; office?: { id: string; name: string } },
+  access: { createdBy?: string; restaurant?: { id: string; name: string } },
 ): Promise<AdminCreateResult> {
   const doc: AdminDoc = {
     _id: id,
@@ -143,7 +168,7 @@ async function insertAdmin(
     role: "owner",
     active: true,
     ...(access.createdBy ? { createdBy: access.createdBy } : {}),
-    ...(access.office ? { officeId: access.office.id, officeName: access.office.name } : {}),
+    ...(access.restaurant ? { restaurantId: access.restaurant.id } : {}),
   };
   try {
     // The unique index on email is what stops two signups with the same address from both succeeding.
@@ -164,10 +189,21 @@ async function insertAdmin(
       name: doc.name,
       email: doc.email,
       role: "owner",
-      officeId: access.office?.id ?? null,
-      officeName: access.office?.name ?? null,
+      restaurantId: access.restaurant?.id ?? null,
+      restaurantName: access.restaurant?.name ?? null,
     },
   };
+}
+
+// Makes this owner the one who runs the restaurant when it has nobody yet, so the restaurant's card,
+// staff list and attendance show them. A restaurant that already has an owner keeps it.
+async function runIfVacant(restaurantId: string, ownerId: string): Promise<void> {
+  await (await restaurantsCollection()).updateOne({ _id: restaurantId, managerId: null }, { $set: { managerId: ownerId } });
+}
+
+// Saves the restaurant an owner belongs to. Called when a restaurant is created with this owner running it.
+export async function setOwnerRestaurant(ownerId: string, restaurantId: string): Promise<void> {
+  await (await adminsCollection()).updateOne({ _id: ownerId }, { $set: { restaurantId } });
 }
 
 // Creates the first admin, who is an owner. Refused once any admin exists, and only one of several racing requests can win.
@@ -178,22 +214,24 @@ export async function createInitialAdminAccount(input: NewAdminInput): Promise<A
   return insertAdmin(input, INITIAL_ADMIN_ID, {});
 }
 
-// Creates another owner account from the Employees page, at the office the signed-in owner picked.
+// Creates another owner account from the Employees page, for the restaurant the signed-in owner picked.
 // The caller must be signed in as an owner; the route checks that.
-// The office must already exist in the Offices list; the office name is saved with the account.
-export async function createOwnerAccount(input: NewAdminInput, officeId: unknown, creator: Actor): Promise<AdminCreateResult> {
+// The restaurant must already exist on the Restaurants page; its ID is saved with the account.
+export async function createOwnerAccount(input: NewAdminInput, restaurantId: unknown, creator: Actor): Promise<AdminCreateResult> {
   const errors = validateAdminSignup(input);
-  const office = typeof officeId === "string" && officeId ? await findOffice(officeId) : null;
-  if (!office) errors.officeId = "Choose the office this owner works at.";
-  if (Object.keys(errors).length > 0 || !office) return { ok: false, errors };
+  const restaurant =
+    typeof restaurantId === "string" && restaurantId ? await (await restaurantsCollection()).findOne({ _id: restaurantId }) : null;
+  if (!restaurant) errors.restaurantId = "Choose the restaurant this owner belongs to.";
+  if (Object.keys(errors).length > 0 || !restaurant) return { ok: false, errors };
 
   const id = `admin-${Date.now().toString(36)}-${randomHex(3)}`;
   const result = await insertAdmin(input, id, {
     createdBy: creator.id,
-    office: { id: office.id, name: office.name },
+    restaurant: { id: restaurant._id, name: restaurant.name },
   });
   if (result.ok) {
-    await logActivity(id, creator, "Owner added", `Office: ${office.name}.`);
+    await runIfVacant(restaurant._id, id);
+    await logActivity(id, creator, "Owner added", `Restaurant: ${restaurant.name}.`);
   }
   return result;
 }
@@ -212,31 +250,53 @@ export async function findAdminAccount(id: string): Promise<AdminAccount | null>
   return doc ? toAccount(doc) : null;
 }
 
-// Every owner account, oldest first.
+// Every owner account, oldest first, with the restaurant each one belongs to.
 export async function listStaff(): Promise<StaffMember[]> {
   const docs = await (await adminsCollection()).find({}).sort({ createdAt: 1 }).limit(200).toArray();
-  return docs.map(toStaffMember);
+  const links = await restaurantLinks();
+  return docs.map((doc) => toStaffMember(doc, links));
+}
+
+// One owner with the restaurant they belong to, or null when there is no account with this ID.
+export async function findStaffMember(id: string): Promise<StaffMember | null> {
+  const doc = await (await adminsCollection()).findOne({ _id: id });
+  return doc ? toStaffMember(doc, await restaurantLinks()) : null;
+}
+
+// The owners who belong to one restaurant.
+export async function listOwnersOfRestaurant(restaurantId: string): Promise<StaffMember[]> {
+  return (await listStaff()).filter((member) => member.restaurantId === restaurantId);
 }
 
 export type StaffUpdateResult = { ok: true; member: StaffMember } | { ok: false; status: number; error: string };
 
-// Changes an owner's office, or switches them on and off. An owner cannot switch off their own account.
+// Changes the restaurant an owner belongs to, or switches them on and off. An owner cannot switch off
+// their own account, and an owner who runs a restaurant stays with that restaurant.
 // Each change is written to that owner's activity history.
 export async function updateStaff(
   targetId: string,
   actor: Actor,
-  changes: { active?: unknown; officeId?: unknown },
+  changes: { active?: unknown; restaurantId?: unknown },
 ): Promise<StaffUpdateResult> {
   const collection = await adminsCollection();
   const target = await collection.findOne({ _id: targetId });
   if (!target) return { ok: false, status: 404, error: "Account not found." };
+  const links = await restaurantLinks();
+  const before = restaurantOf(target, links);
 
   const $set: Partial<AdminDoc> = {};
-  if (changes.officeId !== undefined) {
-    const office = typeof changes.officeId === "string" ? await findOffice(changes.officeId) : null;
-    if (!office) return { ok: false, status: 400, error: "Choose a valid office." };
-    $set.officeId = office.id;
-    $set.officeName = office.name;
+  if (changes.restaurantId !== undefined) {
+    const restaurantId = typeof changes.restaurantId === "string" ? changes.restaurantId : "";
+    if (!links.nameById.has(restaurantId)) return { ok: false, status: 400, error: "Choose a valid restaurant." };
+    const runs = links.runBy.get(targetId);
+    if (runs && runs !== restaurantId) {
+      return {
+        ok: false,
+        status: 400,
+        error: `${target.name} runs ${links.nameById.get(runs)}, so they belong to that restaurant.`,
+      };
+    }
+    $set.restaurantId = restaurantId;
   }
   if (changes.active !== undefined) {
     if (typeof changes.active !== "boolean") return { ok: false, status: 400, error: "Invalid status." };
@@ -247,10 +307,11 @@ export async function updateStaff(
 
   const updated = await collection.findOneAndUpdate({ _id: targetId }, { $set }, { returnDocument: "after" });
   if (!updated) return { ok: false, status: 404, error: "Account not found." };
-  const member = toStaffMember(updated);
+  if ($set.restaurantId !== undefined) await runIfVacant($set.restaurantId, targetId);
+  const member = toStaffMember(updated, await restaurantLinks());
 
-  if ($set.officeId !== undefined && $set.officeId !== target.officeId) {
-    await logActivity(targetId, actor, "Office changed", `${target.officeName ?? "No office"} → ${member.officeName ?? ""}`);
+  if ($set.restaurantId !== undefined && $set.restaurantId !== before.restaurantId) {
+    await logActivity(targetId, actor, "Restaurant changed", `${before.restaurantName ?? "No restaurant"} → ${member.restaurantName ?? ""}`);
   }
   if (changes.active !== undefined && (target.active !== false) !== member.active) {
     await logActivity(targetId, actor, member.active ? "Switched on" : "Switched off", member.name);

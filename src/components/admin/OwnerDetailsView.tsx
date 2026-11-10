@@ -3,14 +3,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Building2, Pencil, Plus, Power, UserPlus, X } from "lucide-react";
-import { fieldClass, ghostClass, panelClass, Pill, primaryClass, type OfficeOption } from "@/components/admin/EmployeesView";
+import { ArrowLeft, ArrowRight, Pencil, Plus, Power, Store, UserPlus, X } from "lucide-react";
+import { fieldClass, ghostClass, panelClass, Pill, primaryClass, type RestaurantOption } from "@/components/admin/EmployeesView";
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
 import { canAccess, type StaffRole } from "@/lib/permissions";
 import { getAdminSession, type StaffSession } from "@/lib/local/adminSession";
 import { useSession } from "@/lib/local/useSession";
 
-// Page for one owner: profile, office, team and activity history.
+// Page for one owner: profile, restaurant, team and activity history.
 // The data handlers return only this owner's own staff and history, and check the signed-in owner on every request.
 
 interface OwnerView {
@@ -20,8 +20,8 @@ interface OwnerView {
   role: StaffRole;
   active: boolean;
   createdAt: string;
-  officeId: string | null;
-  officeName: string | null;
+  restaurantId: string | null;
+  restaurantName: string | null;
 }
 
 interface TeamMemberView {
@@ -42,7 +42,6 @@ interface ActivityView {
 
 interface OwnerDetailsResponse {
   owner: OwnerView;
-  office: OfficeOption | null;
   staff: TeamMemberView[];
   activity: ActivityView[];
 }
@@ -69,7 +68,7 @@ export function OwnerDetailsGate({ ownerId }: { ownerId: string }) {
 function OwnerDetailsView({ ownerId, currentId }: { ownerId: string; currentId: string }) {
   const base = `/api/admin/owners/${encodeURIComponent(ownerId)}`;
   const details = useCustomerData<OwnerDetailsResponse>(base);
-  const officesState = useCustomerData<{ offices: OfficeOption[] }>("/api/admin/offices");
+  const restaurantsState = useCustomerData<{ restaurants: RestaurantOption[] }>("/api/admin/restaurants");
   const employees = useCustomerData<{ staff: OwnerView[] }>("/api/admin/employees");
   const [notice, setNotice] = useState<Notice>(null);
 
@@ -99,7 +98,7 @@ function OwnerDetailsView({ ownerId, currentId }: { ownerId: string; currentId: 
           key={details.data.owner.id}
           data={details.data}
           isSelf={details.data.owner.id === currentId}
-          offices={officesState.data?.offices ?? []}
+          restaurants={restaurantsState.data?.restaurants ?? []}
           owners={(employees.data?.staff ?? []).filter((m) => m.id !== ownerId)}
           setNotice={setNotice}
           reload={reloadAll}
@@ -112,20 +111,21 @@ function OwnerDetailsView({ ownerId, currentId }: { ownerId: string; currentId: 
 function OwnerContent({
   data,
   isSelf,
-  offices,
+  restaurants,
   owners,
   setNotice,
   reload,
 }: {
   data: OwnerDetailsResponse;
   isSelf: boolean;
-  offices: OfficeOption[];
+  restaurants: RestaurantOption[];
   owners: OwnerView[];
   setNotice: (n: Notice) => void;
   reload: () => void;
 }) {
-  const { owner, office, staff, activity } = data;
-  const [officeDraft, setOfficeDraft] = useState(owner.officeId ?? "");
+  const { owner, staff, activity } = data;
+  const restaurant = restaurants.find((r) => r.id === owner.restaurantId) ?? null;
+  const [restaurantDraft, setRestaurantDraft] = useState(owner.restaurantId ?? "");
   const [busy, setBusy] = useState(false);
 
   // Account-level changes go through the employees endpoint, which owns the owner accounts.
@@ -142,12 +142,12 @@ function OwnerContent({
     return true;
   };
 
-  const saveOffice = async () => {
-    if (!officeDraft) {
-      setNotice({ tone: "error", text: "Choose an office." });
+  const saveRestaurant = async () => {
+    if (!restaurantDraft) {
+      setNotice({ tone: "error", text: "Choose a restaurant." });
       return;
     }
-    await patchOwner({ officeId: officeDraft }, "Office was saved.");
+    await patchOwner({ restaurantId: restaurantDraft }, "Restaurant was saved.");
   };
 
   const toggleActive = async () => {
@@ -163,7 +163,7 @@ function OwnerContent({
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-3xl font-black tracking-tight md:text-4xl">{owner.name}</h1>
           <Pill tone={owner.active ? "green" : "red"}>{owner.active ? "Active" : "Switched off"}</Pill>
-          {owner.officeName ? <Pill tone="orange">{owner.officeName}</Pill> : <Pill tone="red">No office assigned</Pill>}
+          {owner.restaurantName ? <Pill tone="orange">{owner.restaurantName}</Pill> : <Pill tone="red">No restaurant assigned</Pill>}
         </div>
         <p className="break-all text-sm text-zinc-400">{owner.email}</p>
       </header>
@@ -189,47 +189,53 @@ function OwnerContent({
           </dl>
         </section>
 
-        {/* Office */}
-        <section className={`${panelClass} flex flex-col gap-4`} aria-labelledby="office-heading">
-          <h2 id="office-heading" className="flex items-center gap-2 font-bold">
-            <Building2 className="h-4 w-4 text-orange-500" aria-hidden="true" />
-            Assigned office
+        {/* Restaurant */}
+        <section className={`${panelClass} flex flex-col gap-4`} aria-labelledby="restaurant-heading">
+          <h2 id="restaurant-heading" className="flex items-center gap-2 font-bold">
+            <Store className="h-4 w-4 text-orange-500" aria-hidden="true" />
+            Restaurant
           </h2>
-          {office ? (
-            <dl className="grid gap-3 text-sm">
-              <Row label="Office name" value={office.name} />
-              <Row label="Address" value={office.address || "Not provided"} />
-            </dl>
+          {owner.restaurantId ? (
+            <div className="flex flex-col gap-3">
+              <dl className="grid gap-3 text-sm">
+                <Row label="Restaurant name" value={owner.restaurantName ?? ""} />
+                <Row label="Area" value={restaurant?.area ?? ""} />
+              </dl>
+              <Link href={`/admin/restaurants/${encodeURIComponent(owner.restaurantId)}`} className={`${ghostClass} w-fit`}>
+                Open restaurant
+                <ArrowRight className="h-4 w-4 text-orange-500" aria-hidden="true" />
+              </Link>
+            </div>
           ) : (
-            <p className="text-sm text-amber-300">This owner is not assigned to an office yet. Choose one below.</p>
+            <p className="text-sm text-amber-300">This owner does not belong to a restaurant yet. Choose one below.</p>
           )}
 
           <div className="border-t border-zinc-800 pt-4">
-            {offices.length === 0 ? (
+            {restaurants.length === 0 ? (
               <p className="text-sm text-zinc-400">
-                No offices exist yet.{" "}
-                <Link href="/admin/offices" className="text-orange-400 underline">
-                  Create an office
+                No restaurants exist yet.{" "}
+                <Link href="/admin/restaurants" className="text-orange-400 underline">
+                  Create a restaurant
                 </Link>{" "}
                 first.
               </p>
             ) : (
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  <label htmlFor="reassign-office" className="text-sm font-semibold text-zinc-200">
-                    {office ? "Move to another office" : "Assign office"}
+                  <label htmlFor="reassign-restaurant" className="text-sm font-semibold text-zinc-200">
+                    {owner.restaurantId ? "Move to another restaurant" : "Assign restaurant"}
                   </label>
-                  <select id="reassign-office" value={officeDraft} onChange={(e) => setOfficeDraft(e.target.value)} className={fieldClass}>
-                    <option value="">Choose an office</option>
-                    {offices.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
+                  <select id="reassign-restaurant" value={restaurantDraft} onChange={(e) => setRestaurantDraft(e.target.value)} className={fieldClass}>
+                    <option value="">Choose a restaurant</option>
+                    {restaurants.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name} — {r.area}
                       </option>
                     ))}
                   </select>
                 </div>
-                <button type="button" onClick={saveOffice} disabled={busy || officeDraft === (owner.officeId ?? "")} className={primaryClass}>
-                  Save office
+                <button type="button" onClick={saveRestaurant} disabled={busy || restaurantDraft === (owner.restaurantId ?? "")} className={primaryClass}>
+                  Save restaurant
                 </button>
               </div>
             )}

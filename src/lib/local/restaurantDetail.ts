@@ -1,6 +1,7 @@
 import { findRestaurant, type Restaurant } from "@/lib/local/restaurants";
 import { getOwnerDetails, type TeamMember } from "@/lib/local/staffMembers";
 import { listOrdersForRestaurant } from "@/lib/local/orders";
+import { listOwnersOfRestaurant } from "@/lib/local/adminAccounts";
 import { listGrocery, listPurchases, listAttendance, listRiders, type AttendanceRecord, type GroceryItem, type PurchaseRecord, type Rider } from "@/lib/local/restaurantRecords";
 import type { Order } from "@/types";
 
@@ -8,6 +9,8 @@ import type { Order } from "@/types";
 
 export interface RestaurantDetail {
   restaurant: Restaurant;
+  // Owner accounts that belong to this restaurant (chosen when the owner was added on the Employees page).
+  owners: { id: string; name: string; active: boolean }[];
   staff: TeamMember[];
   orders: Order[];
   grocery: GroceryItem[];
@@ -24,6 +27,7 @@ export async function getRestaurantDetail(restaurantId: string, attendanceDate: 
   const team = restaurant.ownerId ? await getOwnerDetails(restaurant.ownerId) : null;
   return {
     restaurant,
+    owners: (await listOwnersOfRestaurant(restaurantId)).map((o) => ({ id: o.id, name: o.name, active: o.active })),
     staff: team?.staff ?? [],
     orders: await listOrdersForRestaurant(restaurantId),
     grocery: await listGrocery(restaurantId),

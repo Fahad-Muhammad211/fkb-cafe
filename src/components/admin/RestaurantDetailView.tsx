@@ -56,6 +56,7 @@ interface RiderView {
 }
 interface DetailResponse {
   restaurant: RestaurantCard;
+  owners: { id: string; name: string; active: boolean }[];
   staff: StaffView[];
   orders: Order[];
   grocery: GroceryView[];
@@ -157,6 +158,19 @@ function RestaurantDetailView({ restaurantId }: { restaurantId: string }) {
                 </Pill>
                 <Pill tone={data.restaurant.ownerName ? "orange" : "red"}>{data.restaurant.ownerName ?? "No owner assigned"}</Pill>
               </div>
+              {data.owners.length > 0 && (
+                <p className="mt-2 text-sm text-zinc-400">
+                  Owners of this restaurant:{" "}
+                  {data.owners.map((owner, i) => (
+                    <span key={owner.id}>
+                      {i > 0 && ", "}
+                      <Link href={`/admin/employees/${encodeURIComponent(owner.id)}`} className="font-semibold text-zinc-200 hover:text-orange-400">
+                        {owner.name}
+                      </Link>
+                    </span>
+                  ))}
+                </p>
+              )}
             </div>
           </header>
 

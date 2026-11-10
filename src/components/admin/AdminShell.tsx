@@ -3,7 +3,7 @@
 import { Suspense, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Building2, ClipboardList, LayoutDashboard, LogOut, Menu, Store, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, ClipboardList, LayoutDashboard, LogOut, Menu, Store, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
 import { adminLogoutRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
 import { SECTIONS, canAccess, type StaffRole } from "@/lib/permissions";
@@ -16,7 +16,6 @@ const ICONS: Record<string, LucideIcon> = {
   "/admin/products": UtensilsCrossed,
   "/admin/analytics": Activity,
   "/admin/employees": UserCog,
-  "/admin/offices": Building2,
   "/admin/restaurants": Store,
 };
 

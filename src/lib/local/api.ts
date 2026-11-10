@@ -18,7 +18,6 @@ import { listActiveCoupons } from "@/lib/local/coupons";
 import { createTicket, listTickets } from "@/lib/local/support";
 import { assignRider, cancelOrder, confirmOrder, createOrder, getOrderForActor, listAllOrders, listOrdersForUser, setOrderProgress } from "@/lib/local/orders";
 import { currentActor } from "@/lib/local/actor";
-import { createOffice, listOffices } from "@/lib/local/offices";
 import { createTeamMember, getOwnerDetails, updateTeamMember } from "@/lib/local/staffMembers";
 import { createRestaurant, findRestaurant, listRestaurants, listRestaurantsForCustomers } from "@/lib/local/restaurants";
 import { addGroceryItem, updateGroceryItem, addPurchase, saveAttendance, addRider, updateRiderStatus, setRiderLocation } from "@/lib/local/restaurantRecords";
@@ -432,7 +431,7 @@ const routes: Route[] = [
       if (signedIn) {
         const check = await checkStaff("staff");
         if (!check.ok) return apiError(check.status, "Only an owner can add owner accounts.");
-        const result = await createOwnerAccount(input, body.officeId, { id: signedIn.id, name: signedIn.name });
+        const result = await createOwnerAccount(input, body.restaurantId, { id: signedIn.id, name: signedIn.name });
         if (!result.ok) {
           if ("closed" in result) return apiError(403, "Only an owner can add owner accounts.");
           return apiError(400, "Please correct the highlighted fields.", result.errors);
@@ -468,32 +467,10 @@ const routes: Route[] = [
       const result = await updateStaff(
         id,
         { id: check.session.id, name: check.session.name },
-        { active: body.active, officeId: body.officeId },
+        { active: body.active, restaurantId: body.restaurantId },
       );
       if (!result.ok) return apiError(result.status, result.error);
       return json({ ok: true, member: result.member });
-    },
-  },
-  {
-    method: "GET",
-    pattern: /^\/api\/admin\/offices$/,
-    handler: async () => {
-      const check = await checkStaff("staff");
-      if (!check.ok) return apiError(check.status, check.error);
-      return json({ offices: await listOffices() });
-    },
-  },
-  {
-    method: "POST",
-    pattern: /^\/api\/admin\/offices$/,
-    handler: async (request) => {
-      const check = await checkStaff("staff");
-      if (!check.ok) return apiError(check.status, check.error);
-      const body = await readBody(request);
-      if (!body) return apiError(400, "Invalid request.");
-      const result = await createOffice({ name: body.name, address: body.address });
-      if (!result.ok) return apiError(400, "Please correct the highlighted fields.", result.errors);
-      return json({ ok: true, office: result.office }, 201);
     },
   },
   {
