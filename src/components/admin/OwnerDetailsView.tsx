@@ -14,7 +14,7 @@ import { useSession } from "@/lib/useSession";
 // Page for one owner: profile, restaurant, team and activity history.
 // The data handlers return only this owner's own staff and history, and check the signed-in owner on every request.
 
-const ROLE_LABELS: Record<StaffRole, string> = { admin: "Admin", owner: "Owner", manager: "Manager" };
+const ROLE_LABELS: Record<StaffRole, string> = { admin: "Admin", owner: "Owner", manager: "Manager", cafe_manager: "Cafe manager" };
 
 interface OwnerView {
   id: string;

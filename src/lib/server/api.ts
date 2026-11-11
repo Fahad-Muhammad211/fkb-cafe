@@ -27,8 +27,12 @@ import { createRestaurant, findRestaurant, listRestaurants, listRestaurantsForCu
 import { addGroceryItem, updateGroceryItem, addPurchase, saveAttendance, addRider, updateRiderStatus, setRiderLocation } from "@/lib/server/restaurantRecords";
 import { getRestaurantDetail } from "@/lib/server/restaurantDetail";
 import { isBlocked, recordFailure, clearFailures, DEFAULT_MAX_FAILURES, type Bucket } from "@/lib/server/rateLimit";
+import { addTable, addWaiter, assignTables, completeOrder, createTakeaway, markCleaned, markReady, orderForTable, readCafe, readHistory, readWaiterOrders, readWaiterPerformance, removeWaiter, saveSettings, setTableCount } from "@/lib/server/cafe";
+import { addItem, readStock, recordPurchase, recordUsage, removeItem, saveRecipe, updateItem } from "@/lib/server/stock";
+import { addStaff, listStaffDirectory, removeStaffRecord, updateStaffRecord } from "@/lib/server/cafeStaff";
+import { readDashboard } from "@/lib/server/dashboard";
 import { isValidEmail } from "@/lib/validation";
-import { homeForRole } from "@/lib/permissions";
+import { homeForRole, type Permission } from "@/lib/permissions";
 import type { CartLine } from "@/types";
 
 type Handler = (request: Request, params: string[]) => Promise<Response>;
@@ -831,7 +835,92 @@ const routes: Route[] = [
       return json({ ok: true, order: result.order });
     },
   },
+
+  // Cafe operations (lib/server/cafe.ts, stock.ts, cafeStaff.ts, dashboard.ts). Each route names the
+  // area it belongs to; canAccess gives the Owner (Admin) every area and a cafe Manager the operational ones.
+  ...cafeRoutes(),
 ];
+
+type Session = { id: string; name: string };
+type CafeResult = { ok: true; value: unknown } | { ok: false; status: number; error: string; errors?: Record<string, string> };
+
+// Wraps a cafe handler with the access check and turns a Result into a response.
+function cafeRoute(method: string, pattern: RegExp, permission: Permission, run: (request: Request, params: string[], session: Session) => Promise<CafeResult>): Route {
+  return {
+    method,
+    pattern,
+    handler: async (request, params) => {
+      const check = await checkStaff(permission);
+      if (!check.ok) return apiError(check.status, check.error);
+      const result = await run(request, params, { id: check.session.id, name: check.session.name });
+      if (!result.ok) return apiError(result.status, result.error, result.errors);
+      return json({ ok: true, value: result.value });
+    },
+  };
+}
+
+// GET routes that answer with the value itself.
+function cafeRead(pattern: RegExp, permission: Permission, run: (request: Request, params: string[]) => Promise<CafeResult>): Route {
+  return {
+    method: "GET",
+    pattern,
+    handler: async (request, params) => {
+      const check = await checkStaff(permission);
+      if (!check.ok) return apiError(check.status, check.error);
+      const result = await run(request, params);
+      if (!result.ok) return apiError(result.status, result.error);
+      return json(result.value);
+    },
+  };
+}
+
+function cafeRoutes(): Route[] {
+  const body = async (request: Request) => (await readBody(request)) ?? {};
+  const from = (request: Request) => new URL(request.url).searchParams.get("from");
+  const value = async <T>(v: Promise<T>): Promise<CafeResult> => ({ ok: true, value: await v });
+  return [
+    // Tables, waiters and orders
+    cafeRead(/^\/api\/admin\/cafe$/, "cafe", () => value(readCafe())),
+    cafeRead(/^\/api\/admin\/cafe\/history$/, "cafe", (r) => readHistory(from(r))),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/tables$/, "cafe", () => addTable()),
+    cafeRoute("PUT", /^\/api\/admin\/cafe\/tables$/, "cafe", async (r) => setTableCount((await body(r)).count)),
+    cafeRoute("PUT", /^\/api\/admin\/cafe\/settings$/, "cafe", async (r) => saveSettings(await body(r))),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/waiters$/, "cafe", async (r, _p, s) => addWaiter(await body(r), s)),
+    cafeRoute("DELETE", /^\/api\/admin\/cafe\/waiters\/([^/]+)$/, "cafe", async (_r, [id]) => removeWaiter(id)),
+    cafeRoute("PUT", /^\/api\/admin\/cafe\/waiters\/([^/]+)\/tables$/, "cafe", async (r, [id]) => assignTables(id, (await body(r)).tableIds)),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/tables\/([^/]+)\/order$/, "cafe", async (r, [id]) => orderForTable(id, (await body(r)).items)),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/tables\/([^/]+)\/cleaned$/, "cafe", async (_r, [id]) => markCleaned(id)),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/takeaway$/, "cafe", async (r) => createTakeaway(await body(r))),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/orders\/([^/]+)\/ready$/, "cafe", async (_r, [id]) => markReady(id)),
+    cafeRoute("POST", /^\/api\/admin\/cafe\/orders\/([^/]+)\/complete$/, "cafe", async (_r, [id]) => completeOrder(id)),
+
+    // Waiter performance
+    cafeRead(/^\/api\/admin\/waiters\/performance$/, "waiters", (r) => readWaiterPerformance(from(r))),
+    cafeRead(/^\/api\/admin\/waiters\/([^/]+)\/orders$/, "waiters", (r, [id]) => readWaiterOrders(id, from(r))),
+
+    // Stock
+    cafeRead(/^\/api\/admin\/stock$/, "stock", () => value(readStock())),
+    cafeRoute("POST", /^\/api\/admin\/stock\/items$/, "stock", async (r) => addItem(await body(r))),
+    cafeRoute("PATCH", /^\/api\/admin\/stock\/items\/([^/]+)$/, "stock", async (r, [id]) => updateItem(id, await body(r))),
+    cafeRoute("DELETE", /^\/api\/admin\/stock\/items\/([^/]+)$/, "stock", async (_r, [id]) => removeItem(id)),
+    cafeRoute("POST", /^\/api\/admin\/stock\/items\/([^/]+)\/purchases$/, "stock", async (r, [id]) => recordPurchase(id, await body(r))),
+    cafeRoute("POST", /^\/api\/admin\/stock\/items\/([^/]+)\/usage$/, "stock", async (r, [id]) => recordUsage(id, await body(r))),
+    // Recipes decide what each sale costs, so only the Owner edits them (they sit with menu prices).
+    cafeRoute("PUT", /^\/api\/admin\/stock\/recipes\/([^/]+)$/, "menu", async (r, [id]) => saveRecipe(id, (await body(r)).lines)),
+
+    // Cafe staff directory (salaries): Owner only. Not /api/admin/staff, which is the restaurant teams' route.
+    cafeRead(/^\/api\/admin\/cafe-staff$/, "staff", () => value(listStaffDirectory())),
+    cafeRoute("POST", /^\/api\/admin\/cafe-staff$/, "staff", async (r, _p, s) => {
+      const b = await body(r);
+      return addStaff(b.kind, b, s);
+    }),
+    cafeRoute("PATCH", /^\/api\/admin\/cafe-staff\/([^/]+)$/, "staff", async (r, [id]) => updateStaffRecord(id, await body(r))),
+    cafeRoute("DELETE", /^\/api\/admin\/cafe-staff\/([^/]+)$/, "staff", async (_r, [id]) => removeStaffRecord(id)),
+
+    // Dashboard: Owner only
+    cafeRead(/^\/api\/admin\/dashboard$/, "home", (r) => readDashboard(new URL(r.url).searchParams.get("today"))),
+  ];
+}
 
 
 // Runs one request against the handlers. Unknown paths and methods return 404 and 405.

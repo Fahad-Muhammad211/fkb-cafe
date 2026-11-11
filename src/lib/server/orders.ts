@@ -4,6 +4,7 @@ import { ORDER_STEPS } from "@/lib/orderStatus";
 import { validateCheckout } from "@/lib/validation";
 import { extraOptionGroups } from "@/data/menuOptions";
 import { getCollection, isDuplicateKeyError } from "@/lib/server/collections";
+import { deductForOrder } from "@/lib/server/stock";
 import { sanitizeCartLine, MAX_CART_LINES } from "@/lib/server/carts";
 import { listRestaurantsForCustomers } from "@/lib/server/restaurants";
 import { findRider } from "@/lib/server/restaurantRecords";
@@ -311,6 +312,11 @@ export async function setOrderProgress(id: string, step: unknown): Promise<Order
     return exists ? notChangeable(id, "Confirm the order before changing its progress.") : { ok: false, status: 404, error: "Order not found." };
   }
   await (await historyCollection()).insertOne({ _id: `EVT-${id}-progress-${now}`, orderId: id, event: "progress", step, at: now, actor: "admin" });
+  if (step === LAST_STEP) {
+    // Delivered: take the recipe ingredients out of stock (once per order, see deductForOrder).
+    const doc = await (await ordersCollection()).findOne({ _id: id }, { projection: { lines: 1 } });
+    if (doc) await deductForOrder(id, doc.lines.map((l) => ({ productId: l.itemId, qty: l.qty })));
+  }
   return loaded(id);
 }
 

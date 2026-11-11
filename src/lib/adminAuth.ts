@@ -1,10 +1,12 @@
+import type { StaffHome } from "@/lib/permissions";
+
 // Browser-side helpers for the admin auth API. Passwords go straight to the server over POST
 // requests and are never stored in the browser. The session is an httpOnly cookie set by the
 // server, so this module never reads or writes it.
 
 export type AdminAuthErrors = Record<string, string>;
 // `redirect` is where the server says the signed-in account belongs: /admin for the Admin, /owner for an Owner.
-export type AdminAuthResult = { ok: true; redirect: "/admin" | "/owner" } | { ok: false; errors: AdminAuthErrors };
+export type AdminAuthResult = { ok: true; redirect: StaffHome } | { ok: false; errors: AdminAuthErrors };
 
 const UNREACHABLE: AdminAuthResult = { ok: false, errors: { form: "Could not reach the server. Check your connection and try again." } };
 
@@ -18,7 +20,7 @@ async function send(url: string, method: "POST" | "DELETE", body?: unknown): Pro
       credentials: "same-origin",
     });
     const data = (await res.json().catch(() => null)) as { error?: string; errors?: AdminAuthErrors; redirect?: unknown } | null;
-    if (res.ok) return { ok: true, redirect: data?.redirect === "/owner" ? "/owner" : "/admin" };
+    if (res.ok) return { ok: true, redirect: data?.redirect === "/owner" || data?.redirect === "/admin/cafe" ? data.redirect : "/admin" };
     return { ok: false, errors: data?.errors ?? { form: data?.error ?? "Something went wrong. Please try again." } };
   } catch {
     return UNREACHABLE;

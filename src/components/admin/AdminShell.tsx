@@ -3,14 +3,18 @@
 import { Suspense, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, ClipboardList, LayoutDashboard, LogOut, Menu, Store, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
+import { Activity, Boxes, ClipboardList, Coffee, LayoutDashboard, LogOut, Menu, ShoppingBag, Store, Trophy, UserCog, UtensilsCrossed, Users, X, type LucideIcon } from "lucide-react";
 import { adminLogoutRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
-import { SECTIONS, canAccess, type StaffRole } from "@/lib/permissions";
+import { ROLE_LABELS, SECTIONS, canAccess, type StaffRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<string, LucideIcon> = {
   "/admin": LayoutDashboard,
+  "/admin/cafe": Coffee,
+  "/admin/takeaway": ShoppingBag,
+  "/admin/stock": Boxes,
+  "/admin/waiters": Trophy,
   "/admin/orders": ClipboardList,
   "/admin/customers": Users,
   "/admin/products": UtensilsCrossed,
@@ -46,7 +50,7 @@ function Brand({ session }: { session: ShellSession }) {
       </span>
       <div className="min-w-0">
         <p className="truncate font-bold leading-tight">{session.name}</p>
-        <p className="text-xs font-semibold uppercase tracking-wide text-orange-500">Owner</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-orange-500">{ROLE_LABELS[session.role]}</p>
       </div>
     </div>
   );

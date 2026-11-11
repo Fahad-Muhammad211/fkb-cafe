@@ -9,6 +9,7 @@ import { formatPKR } from "@/lib/format";
 import { ORDER_STEPS, statusLabel } from "@/lib/orderStatus";
 import { useNow } from "@/hooks/useNow";
 import { BarChart, Donut, HorizontalBars } from "@/components/admin/charts";
+import { CafeHistory } from "@/components/admin/cafe/CafeHistory";
 import type { Order } from "@/types";
 
 const STATUS_COLORS = ["#a1a1aa", "#38bdf8", "#f59e0b", "#ffd400", "#34d399"];
@@ -62,6 +63,8 @@ export function AnalyticsView() {
           );
         })}
       </div>
+
+      <CafeHistory />
 
       <div className="grid gap-6 xl:grid-cols-3">
         <section aria-labelledby="revenue-heading" className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 xl:col-span-2">

@@ -100,6 +100,7 @@ const INITIAL_ADMIN_ID = "admin-initial";
 // was saved with role "owner" before the Admin role existed.
 const roleOf = (doc: AdminDoc): StaffRole => {
   if (doc.role === "admin" || doc._id === INITIAL_ADMIN_ID) return "admin";
+  if (doc.role === "cafe_manager") return "cafe_manager";
   if (doc.role === "manager" && doc.managerAccount === true) return "manager";
   return "owner";
 };
@@ -426,4 +427,27 @@ export async function updateStaff(
     await logActivity(targetId, actor, member.active ? "Switched on" : "Switched off", member.name);
   }
   return { ok: true, member };
+}
+
+// A cafe Manager: signs in at /admin/login (or /login) and gets the operational areas of the Admin
+// dashboard only (see canAccess in lib/permissions.ts). Not tied to a restaurant. Created from the
+// Employees page by the Owner (the Admin account); the route checks that.
+export async function createCafeManagerAccount(input: { name: string; email: string; password: string }, creator: Actor): Promise<AdminCreateResult> {
+  const account = { ...input, confirm: input.password };
+  const errors = validateAdminSignup(account);
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  const id = `admin-${Date.now().toString(36)}-${randomHex(3)}`;
+  return insertAdmin(account, id, { role: "cafe_manager", createdBy: creator.id });
+}
+
+// Switches a cafe Manager's login on or off. Only cafe Manager accounts can be changed here.
+export async function setCafeManagerActive(id: string, active: boolean): Promise<boolean> {
+  const res = await (await adminsCollection()).updateOne({ _id: id, role: "cafe_manager" }, { $set: { active } });
+  return res.matchedCount > 0;
+}
+
+// Deletes a cafe Manager's login. Only cafe Manager accounts can be deleted here.
+export async function deleteCafeManagerAccount(id: string): Promise<boolean> {
+  const res = await (await adminsCollection()).deleteOne({ _id: id, role: "cafe_manager" });
+  return res.deletedCount > 0;
 }

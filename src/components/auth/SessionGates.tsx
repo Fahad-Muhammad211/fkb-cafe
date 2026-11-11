@@ -7,7 +7,7 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { AdminLoginForm, AdminSignupForm } from "@/components/admin/AdminAuthPages";
 import { getAdminSession, getCustomerSession, type StaffSession } from "@/lib/sessionClient";
 import { Checking, useSession } from "@/lib/useSession";
-import { homeForRole } from "@/lib/permissions";
+import { homeForRole, usesAdminDashboard } from "@/lib/permissions";
 import type { AuthUser } from "@/types";
 
 // Guard for every /account page. Signed-out visitors go to the customer login.
@@ -28,11 +28,11 @@ export function CustomerGuard({ children }: { children: ReactNode }) {
 export function AdminGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const status = useSession<StaffSession>(getAdminSession);
-  const isAdmin = status.state === "ready" && status.value.role === "admin";
+  const isAdmin = status.state === "ready" && usesAdminDashboard(status.value.role);
 
   useEffect(() => {
     if (status.state === "signedOut") router.replace("/admin/login");
-    else if (status.state === "ready" && status.value.role !== "admin") router.replace(homeForRole(status.value.role));
+    else if (status.state === "ready" && !usesAdminDashboard(status.value.role)) router.replace(homeForRole(status.value.role));
   }, [status, router]);
 
   if (status.state !== "ready" || !isAdmin) return <Checking text="Checking admin session…" />;
