@@ -22,10 +22,3 @@ export async function getAdminSession(): Promise<StaffSession | null> {
 export async function getCustomerSession(): Promise<AuthUser | null> {
   return (await getJson<{ user?: AuthUser | null }>("/api/customer/profile")).user ?? null;
 }
-
-export type AdminSetupStatus = { adminExists: boolean; open: boolean; keyConfigured: boolean };
-
-// Whether first-Admin setup is open (no Admin yet and the server has ADMIN_SETUP_KEY set).
-export async function getAdminSetupStatus(): Promise<AdminSetupStatus> {
-  return getJson<AdminSetupStatus>("/api/admin/setup");
-}

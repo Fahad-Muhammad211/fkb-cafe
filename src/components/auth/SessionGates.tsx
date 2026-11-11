@@ -4,8 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { CustomerShell } from "@/components/customer/CustomerShell";
 import { AdminShell } from "@/components/admin/AdminShell";
-import { AdminLoginForm, AdminSignupClosed, AdminSignupForm } from "@/components/admin/AdminAuthPages";
-import { getAdminSession, getAdminSetupStatus, getCustomerSession, type AdminSetupStatus, type StaffSession } from "@/lib/sessionClient";
+import { AdminLoginForm, AdminSignupForm } from "@/components/admin/AdminAuthPages";
+import { getAdminSession, getCustomerSession, type StaffSession } from "@/lib/sessionClient";
 import { Checking, useSession } from "@/lib/useSession";
 import { homeForRole } from "@/lib/permissions";
 import type { AuthUser } from "@/types";
@@ -42,28 +42,23 @@ export function AdminGuard({ children }: { children: ReactNode }) {
   );
 }
 
-// Setup status as the sign-up pages need it. If the server cannot answer, setup is treated as closed.
-const CLOSED_STATUS: AdminSetupStatus = { adminExists: true, open: false, keyConfigured: false };
-const loadSetupStatus = () => getAdminSetupStatus().catch(() => CLOSED_STATUS);
-
-// /admin/login (and /admin/signup, which opens on the Sign Up view). Signed-in accounts go to their
-// dashboard. Signed-out visitors see Login by default and can switch to Sign Up and back. The Sign Up
-// view shows the form only while first-Admin signup is open (no Admin yet and ADMIN_SETUP_KEY configured
-// on the server); otherwise it says signup is closed. The server enforces the same rule on every request.
+// /admin/login (and /admin/signup, which opens on the Sign Up view). Both views are always available.
+//  - Signed-out visitors see Login by default and can switch to Sign Up and back. Sign Up is open to
+//    anyone, whether or not an Admin already exists; each sign-up creates a new Admin and signs them in.
+//  - A signed-in Admin who opens /admin/signup gets the form for creating another Admin (they stay signed in).
+//  - Any other signed-in account (and a signed-in Admin on /admin/login) goes to its dashboard.
 export function AdminAuthGate({ initialView = "login" }: { initialView?: "login" | "signup" }) {
   const router = useRouter();
   const status = useSession<StaffSession>(getAdminSession);
-  const [setup, setSetup] = useState<AdminSetupStatus | null>(null);
   const [view, setView] = useState(initialView);
+  const adminAddsAdmin = status.state === "ready" && status.value.role === "admin" && initialView === "signup";
 
   useEffect(() => {
-    if (status.state === "ready") router.replace(homeForRole(status.value.role));
-    if (status.state === "signedOut") void loadSetupStatus().then(setSetup);
-  }, [status, router]);
+    if (status.state === "ready" && !adminAddsAdmin) router.replace(homeForRole(status.value.role));
+  }, [status, router, adminAddsAdmin]);
 
-  if (status.state !== "signedOut" || setup === null) return <div className="min-h-dvh bg-zinc-950" />;
-  const showLogin = () => setView("login");
+  if (adminAddsAdmin) return <AdminSignupForm mode="additional" />;
+  if (status.state !== "signedOut") return <div className="min-h-dvh bg-zinc-950" />;
   if (view === "login") return <AdminLoginForm onSignUp={() => setView("signup")} />;
-  if (setup.open) return <AdminSignupForm onLogin={showLogin} />;
-  return <AdminSignupClosed reason={setup.adminExists ? "adminExists" : "notConfigured"} onLogin={showLogin} />;
+  return <AdminSignupForm onLogin={() => setView("login")} />;
 }

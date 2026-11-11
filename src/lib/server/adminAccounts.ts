@@ -5,10 +5,11 @@ import { hashPassword, passwordMatches } from "@/lib/server/passwords";
 import type { StaffRole } from "@/lib/permissions";
 import { deleteActivityFor, logActivity, type Actor } from "@/lib/server/activity";
 
-// Admin accounts live in the "admins" collection. Passwords are hashed with scrypt and never
+// Admin accounts live in the "admins" collection. Passwords are hashed with salted PBKDF2 and never
 // sent back to the browser or written in plain text.
 //
-// The account created by first-Admin setup is the Admin (role "admin", fixed _id INITIAL_ADMIN_ID).
+// Admins have role "admin" (created by Admin sign-up; an Admin made by the old one-time setup has the
+// fixed _id INITIAL_ADMIN_ID).
 // Managers are added by the Admin from the Employees page (role "manager" plus managerAccount: true).
 // Every other account is an owner: documents saved before roles existed have no role field, and
 // documents saved with the old pre-restaurant "manager" role (no managerAccount flag) are read as owners
@@ -150,7 +151,7 @@ export type AdminCreateResult =
   | { ok: false; errors: AccountErrors }
   | { ok: false; closed: true };
 
-// True once any admin exists. Public admin setup is closed from then on.
+// True once any admin exists.
 export async function hasAdminAccounts(): Promise<boolean> {
   return (await (await adminsCollection()).findOne({}, { projection: { _id: 1 } })) !== null;
 }
@@ -208,12 +209,34 @@ export async function setOwnerRestaurant(ownerId: string, restaurantId: string):
   await (await adminsCollection()).updateOne({ _id: ownerId }, { $set: { restaurantId } });
 }
 
-// Creates the first account, the Admin. Refused once any account exists, and only one of several racing requests can win.
-export async function createInitialAdminAccount(input: NewAdminInput): Promise<AdminCreateResult> {
-  if (await hasAdminAccounts()) return { ok: false, closed: true };
+// Public Admin sign-up from /admin/login. Open to anyone, any number of times: there is no first-Admin
+// limit and no setup key. Every account gets the Admin role and a PBKDF2 password hash; the unique email
+// index stops two accounts with the same address.
+// The first Admin on an empty database keeps the fixed INITIAL_ADMIN_ID, as before; if that id is taken
+// (including by a sign-up racing this one) the account simply gets a new id instead.
+export async function createAdminSignupAccount(input: NewAdminInput): Promise<AdminCreateResult> {
   const errors = validateAdminSignup(input);
   if (Object.keys(errors).length > 0) return { ok: false, errors };
-  return insertAdmin(input, INITIAL_ADMIN_ID, { role: "admin" });
+  if (!(await hasAdminAccounts())) {
+    const first = await insertAdmin(input, INITIAL_ADMIN_ID, { role: "admin" });
+    if (first.ok || !("closed" in first)) return first;
+  }
+  return insertAdmin(input, `admin-${Date.now().toString(36)}-${randomHex(3)}`, { role: "admin" });
+}
+
+// A signed-in Admin creates another Admin from /admin/signup (the route checks the caller). The new Admin
+// does not belong to a restaurant, and the creator's own session is not changed.
+export async function createAdditionalAdminAccount(
+  input: { name: string; email: string; password: string },
+  creator: Actor,
+): Promise<AdminCreateResult> {
+  const account = { ...input, confirm: input.password };
+  const errors = validateAdminSignup(account);
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  const id = `admin-${Date.now().toString(36)}-${randomHex(3)}`;
+  const result = await insertAdmin(account, id, { role: "admin", createdBy: creator.id });
+  if (result.ok) await logActivity(id, creator, "Admin added", `${result.account.name} (${result.account.email}).`);
+  return result;
 }
 
 // Creates another owner account from the Employees page, for the restaurant the signed-in owner picked.
@@ -318,6 +341,8 @@ export async function deleteOwnerAccount(targetId: string, actor: Actor): Promis
   const target = await collection.findOne({ _id: targetId });
   if (!target) return { ok: false, status: 404, error: "Account not found." };
   if (targetId === actor.id) return { ok: false, status: 400, error: "You cannot delete your own account." };
+  // Admin accounts are not managed from Employees, so one Admin cannot delete another.
+  if (roleOf(target) === "admin") return { ok: false, status: 403, error: "Admin accounts cannot be deleted here." };
 
   const team = await (await teamCollection()).countDocuments({ managerId: targetId });
   if (team > 0) {
@@ -362,6 +387,8 @@ export async function updateStaff(
   const collection = await adminsCollection();
   const target = await collection.findOne({ _id: targetId });
   if (!target) return { ok: false, status: 404, error: "Account not found." };
+  // Admin accounts are not managed from Employees, so one Admin cannot switch off or move another.
+  if (roleOf(target) === "admin") return { ok: false, status: 403, error: "Admin accounts cannot be changed here." };
   const links = await restaurantLinks();
   const before = restaurantOf(target, links);
 

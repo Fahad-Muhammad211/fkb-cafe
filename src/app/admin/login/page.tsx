@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// Login by default, with a Sign Up view for the first Admin. Signed-in accounts go straight to their dashboard.
+// Login by default, with an always-available Sign Up view. Signed-in accounts go straight to their dashboard.
 export default function AdminLoginPage() {
   return <AdminAuthGate />;
 }

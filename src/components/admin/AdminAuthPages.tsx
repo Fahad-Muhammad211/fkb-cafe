@@ -3,7 +3,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
-import { adminLoginRequest, adminSignupRequest } from "@/lib/adminAuth";
+import { additionalAdminRequest, adminLoginRequest, adminSignupRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
 import { isValidName, isValidPassword } from "@/lib/validation";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
@@ -139,12 +139,15 @@ export function AdminLoginForm({ onSignUp }: { onSignUp: () => void }) {
 const EMPTY_SIGNUP = { name: "", email: "", password: "" };
 type SignupValues = typeof EMPTY_SIGNUP;
 
-// First-Admin sign-up: Full Name, Email, Password. The server only accepts it while no Admin exists and
-// ADMIN_SETUP_KEY is configured in its environment. The key never appears in, or leaves for, the browser.
-export function AdminSignupForm({ onLogin }: { onLogin: () => void }) {
+// Admin sign-up: Full Name, Email, Password. Always shown.
+//  - mode "first" (public sign-up): open to anyone, any number of times. The new Admin is signed in.
+//  - mode "additional": a signed-in Admin creates another Admin. The creator stays signed in.
+// `note` is an optional message shown above the form.
+export function AdminSignupForm({ mode = "first", note, onLogin }: { mode?: "first" | "additional"; note?: string | null; onLogin?: () => void }) {
   const [values, setValues] = useState(EMPTY_SIGNUP);
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
+  const [created, setCreated] = useState<string | null>(null);
 
   const update = (key: keyof SignupValues, value: string) => {
     const next = { ...values, [key]: value };
@@ -164,6 +167,15 @@ export function AdminSignupForm({ onLogin }: { onLogin: () => void }) {
     }
 
     setPending(true);
+    setCreated(null);
+    if (mode === "additional") {
+      const result = await additionalAdminRequest(values);
+      setPending(false);
+      if (!result.ok) return setErrors(result.errors);
+      setCreated(`Admin account created for ${values.name.trim()} (${values.email.trim().toLowerCase()}). They can now log in at /admin/login.`);
+      setValues(EMPTY_SIGNUP);
+      return;
+    }
     const result = await adminSignupRequest(values);
     setPending(false);
     if (result.ok) {
@@ -210,8 +222,29 @@ export function AdminSignupForm({ onLogin }: { onLogin: () => void }) {
   };
 
   return (
-    <AuthFrame title="Create Admin Account" footer={<SwitchView prompt="Already have an account?" label="Login" onClick={onLogin} />}>
+    <AuthFrame
+      title="Create Admin Account"
+      footer={
+        mode === "additional" ? (
+          <Link href="/admin" className="font-semibold text-white underline-offset-4 hover:underline">
+            Back to dashboard
+          </Link>
+        ) : (
+          <SwitchView prompt="Already have an account?" label="Login" onClick={onLogin ?? (() => undefined)} />
+        )
+      }
+    >
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
+        {note && (
+          <p role="note" className="rounded-xl border border-zinc-700 bg-zinc-800/60 px-4 py-3 text-sm text-zinc-300">
+            {note}
+          </p>
+        )}
+        {created && (
+          <p role="status" className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+            {created}
+          </p>
+        )}
         <ErrorBanner message={errors.form ?? null} />
         {field("name", "Full Name", "text", "name")}
         {field("email", "Email", "email", "email", "you@gmail.com")}
@@ -221,19 +254,6 @@ export function AdminSignupForm({ onLogin }: { onLogin: () => void }) {
           {pending ? "Creating account…" : "Create Admin Account"}
         </button>
       </form>
-    </AuthFrame>
-  );
-}
-
-// Shown in the Sign Up view once the first Admin exists, or while the server has signup switched off.
-export function AdminSignupClosed({ reason, onLogin }: { reason: "adminExists" | "notConfigured"; onLogin: () => void }) {
-  return (
-    <AuthFrame title="Admin Sign Up Closed" footer={<SwitchView prompt="Already have an account?" label="Login" onClick={onLogin} />}>
-      <p role="status" className="text-center text-sm text-zinc-300">
-        {reason === "adminExists"
-          ? "An Admin account already exists, so public Admin sign-up is closed. Ask the Admin to create an account for you."
-          : "Admin sign-up is not available on this site right now."}
-      </p>
     </AuthFrame>
   );
 }

@@ -178,7 +178,8 @@ function OwnerContent({
         <section className={`${panelClass} flex flex-col gap-4`} aria-labelledby="account-heading">
           <div className="flex items-center justify-between gap-3">
             <h2 id="account-heading" className="font-bold">Account details</h2>
-            {!isSelf && (
+            {/* Your own account and other Admin accounts cannot be switched off or deleted here (the server refuses too). */}
+            {!isSelf && owner.role !== "admin" && (
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={toggleActive} disabled={busy} className={ghostClass}>
                   <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />

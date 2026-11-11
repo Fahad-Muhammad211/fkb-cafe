@@ -1,6 +1,6 @@
 // Shared test harness: starts a throwaway MongoDB server (mongodb-memory-server, a real mongod running
 // in memory on this machine) and `next start` connected to it. The tests never connect to the database
-// in .env.local: MONGODB_URI, MONGODB_DB and ADMIN_SETUP_KEY are set on the server process, and
+// in .env.local: MONGODB_URI and MONGODB_DB are set on the server process, and
 // process environment variables take precedence over .env.local in Next.js.
 //
 // Run: npm run build, then npm test.
@@ -13,12 +13,12 @@ import { MongoClient } from "mongodb";
 import { MongoMemoryServer } from "mongodb-memory-server";
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
-export const TEST_SETUP_KEY = "test-setup-key-0123456789abcdef";
 const TEST_DB = "meg_test";
 
-// Options: setupKey — the ADMIN_SETUP_KEY for the server; null starts it without one.
-//          env — extra environment variables for the server (for example TRUSTED_PROXY_HOPS).
-export async function startTestEnvironment({ setupKey = TEST_SETUP_KEY, env: extraEnv = {} } = {}) {
+// Options: env — extra environment variables for the server (for example TRUSTED_PROXY_HOPS).
+//          dbEnv — overrides MONGODB_URI / MONGODB_DB on the server only (to test a broken database
+//          setting); the test's own db handle still uses the in-memory server.
+export async function startTestEnvironment({ env: extraEnv = {}, dbEnv = {} } = {}) {
   if (!existsSync(path.join(ROOT, ".next", "BUILD_ID"))) throw new Error("No production build found. Run npm run build first.");
 
   const mongo = await MongoMemoryServer.create();
@@ -37,7 +37,7 @@ export async function startTestEnvironment({ setupKey = TEST_SETUP_KEY, env: ext
   const server = spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)], {
     cwd: ROOT,
     // TRUSTED_PROXY_HOPS is cleared unless a test sets it, so a value in the shell cannot change results.
-    env: { ...process.env, TRUSTED_PROXY_HOPS: "", ...extraEnv, MONGODB_URI: uri, MONGODB_DB: TEST_DB, ADMIN_SETUP_KEY: setupKey ?? "", NEXT_TELEMETRY_DISABLED: "1" },
+    env: { ...process.env, TRUSTED_PROXY_HOPS: "", ...extraEnv, MONGODB_URI: uri, MONGODB_DB: TEST_DB, ...dbEnv, NEXT_TELEMETRY_DISABLED: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const serverLog = [];
@@ -84,7 +84,9 @@ function stopServer(server) {
 async function waitForServer(base) {
   for (let i = 0; i < 90; i += 1) {
     try {
-      const res = await fetch(`${base}/api/catalog`);
+      // A signed-out session check answers without touching MongoDB, so this also works for servers
+      // started with a deliberately broken database setting (dbEnv).
+      const res = await fetch(`${base}/api/admin/session`);
       if (res.ok) return;
     } catch {
       // Not listening yet.
@@ -121,7 +123,7 @@ export async function signUpCustomer(base, overrides = {}) {
 }
 
 // Creates the first Admin through the setup route, sending only what the sign-up form sends (Full Name,
-// Email, Password). The server allows it only while it has ADMIN_SETUP_KEY configured and no Admin exists.
+// Email, Password). Admin sign-up is open to anyone, so this works whether or not an Admin exists.
 export async function createFirstAdmin(base, overrides = {}) {
   const email = overrides.email ?? randomGmail();
   const res = await fetch(`${base}/api/admin/accounts`, {

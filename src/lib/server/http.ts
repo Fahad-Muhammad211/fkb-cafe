@@ -45,23 +45,3 @@ export function trustedClientIp(request: Request): string | null {
   const ip = chain[chain.length - hops];
   return IP_PATTERN.test(ip) ? ip : null;
 }
-
-const LOOPBACK_IP = /^(127(\.\d{1,3}){3}|::1|::ffff:127(\.\d{1,3}){3})$/i;
-const LOOPBACK_HOST = /^(localhost|127(\.\d{1,3}){3}|\[::1\])(:\d+)?$/i;
-
-// Whether the request appears to come from this machine (used to keep keyless first-Admin signup local).
-//
-// Behind a trusted proxy (TRUSTED_PROXY_HOPS) the proxy-reported address must be loopback, so a hosted
-// site never qualifies. Without one, Next.js sets X-Forwarded-For to the socket address only when the
-// client did not send the header itself, so this also requires a single loopback entry and a loopback
-// Host header. That turns away every normal browser on another machine, but a hand-crafted request can
-// fake both headers. The only complete guarantee is binding the server to 127.0.0.1 (next dev -H 127.0.0.1).
-export function isLoopbackRequest(request: Request): boolean {
-  if (process.env.TRUSTED_PROXY_HOPS?.trim()) {
-    const ip = trustedClientIp(request);
-    return ip !== null && LOOPBACK_IP.test(ip);
-  }
-  const chain = (request.headers.get("x-forwarded-for") ?? "").split(",").map((part) => part.trim()).filter(Boolean);
-  const host = request.headers.get("host") ?? "";
-  return chain.length === 1 && LOOPBACK_IP.test(chain[0]) && LOOPBACK_HOST.test(host);
-}

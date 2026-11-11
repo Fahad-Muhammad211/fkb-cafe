@@ -4,7 +4,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { TEST_PASSWORD, TEST_SETUP_KEY, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
+import { TEST_PASSWORD, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
 
 const DASHBOARD_PAGES = [
   "/account",
@@ -48,7 +48,7 @@ before(async () => {
 
   // The first admin on an empty database is created by the initial-setup route.
   const admin = await json("POST", `${base}/api/admin/accounts`, {
-    body: { setupKey: TEST_SETUP_KEY, name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
+    body: { name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
   });
   assert.equal(admin.status, 201, "initial admin setup");
   adminCookie = cookieFrom(admin.res, "meg_admin_session");

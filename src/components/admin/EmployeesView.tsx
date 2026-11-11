@@ -144,6 +144,8 @@ export function EmployeesView({ currentId }: { currentId: string }) {
         <ul className="grid gap-4">
           {staff.map((member) => {
             const isSelf = member.id === currentId;
+            // Your own account and other Admin accounts cannot be switched off or deleted here (the server refuses too).
+            const manageable = !isSelf && member.role !== "admin";
             return (
               <li key={member.id} className={panelClass}>
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -166,14 +168,13 @@ export function EmployeesView({ currentId }: { currentId: string }) {
                       View details
                       <ArrowRight className="h-4 w-4 text-orange-500" aria-hidden="true" />
                     </Link>
-                    {!isSelf && (
+                    {manageable && (
                       <button type="button" onClick={() => toggleActive(member)} disabled={busyId === member.id} className={ghostClass}>
                         <Power className="h-4 w-4 text-orange-500" aria-hidden="true" />
                         {member.active ? "Switch off" : "Switch on"}
                       </button>
                     )}
-                    {/* Your own account cannot be deleted, so it has no Delete button. */}
-                    {!isSelf && (
+                    {manageable && (
                       <button
                         type="button"
                         onClick={() => setDeleting(member)}

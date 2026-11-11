@@ -3,7 +3,7 @@
 //
 // This file was first written for the original version of the app, which used the real database with a
 // temporary meg_test_<random> database. It now uses the shared harness, and the expectations follow the
-// current design: first-Admin setup needs ADMIN_SETUP_KEY, passwords are PBKDF2 hashes, the Admin adds
+// current design: Admin sign-up is open to anyone, passwords are PBKDF2 hashes, an Admin adds
 // Owners (each tied to a restaurant), and pages are guarded in the browser while every API checks the
 // session on the server.
 //
@@ -11,7 +11,7 @@
 
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { TEST_PASSWORD, TEST_SETUP_KEY, cookieFrom, json, randomCustomerEmail, randomGmail, startTestEnvironment } from "./harness.mjs";
+import { TEST_PASSWORD, cookieFrom, json, randomCustomerEmail, randomGmail, startTestEnvironment } from "./harness.mjs";
 
 const PASSWORD = TEST_PASSWORD;
 
@@ -39,29 +39,22 @@ const get = (urlPath, cookie) => fetch(base + urlPath, { headers: cookie ? { coo
 
 const admins = () => env.db.collection("admins");
 
-describe("initial admin setup", () => {
-  test("setup is open before any admin exists", async () => {
-    // The pages render in the browser, so the open/closed state is read from the setup API.
+describe("admin sign-up", () => {
+  test("sign-up is open and both pages render", async () => {
+    // The pages render in the browser; the sign-up state is read from the setup API.
     const status = await json("GET", `${base}/api/admin/setup`);
-    assert.deepEqual(status.data, { adminExists: false, open: true, keyConfigured: true });
+    assert.deepEqual(status.data, { adminExists: false, open: true });
     assert.equal((await get("/admin/signup")).status, 200);
     assert.equal((await get("/admin/login")).status, 200);
   });
 
   let winnerCookie;
 
-  test("concurrent setup requests create exactly one initial admin", async () => {
-    const attempts = Array.from({ length: 8 }, () =>
-      postJson("/api/admin/accounts", { setupKey: TEST_SETUP_KEY, name: "Setup Admin", email: randomGmail(), password: PASSWORD, confirm: PASSWORD }),
-    );
-    const results = await Promise.all(attempts);
-    const statuses = results.map((r) => r.status).sort();
-    assert.equal(statuses.filter((s) => s === 201).length, 1, `expected exactly one 201, got ${statuses.join(",")}`);
-    assert.equal(statuses.filter((s) => s === 403).length, 7, `expected seven 403s, got ${statuses.join(",")}`);
-
-    const winner = results.find((r) => r.status === 201);
-    winnerCookie = cookieFrom(winner, "meg_admin_session");
-    assert.ok(winnerCookie, "the initial admin must be signed in");
+  test("the first sign-up creates the Admin with the initial id and signs them in", async () => {
+    const res = await postJson("/api/admin/accounts", { name: "Setup Admin", email: randomGmail(), password: PASSWORD });
+    assert.equal(res.status, 201);
+    winnerCookie = cookieFrom(res, "meg_admin_session");
+    assert.ok(winnerCookie, "the new Admin must be signed in");
 
     const docs = await admins().find({}).toArray();
     assert.equal(docs.length, 1, "exactly one admin document in the test database");
@@ -69,48 +62,39 @@ describe("initial admin setup", () => {
     assert.equal(docs[0].role, "admin");
   });
 
-  test("setup stays closed after the initial admin exists", async () => {
-    const res = await postJson("/api/admin/accounts", { setupKey: TEST_SETUP_KEY, name: "Late Admin", email: randomGmail(), password: PASSWORD, confirm: PASSWORD });
-    assert.equal(res.status, 403);
-    assert.equal(await admins().countDocuments(), 1);
+  test("sign-up stays open after an Admin exists, and later Admins get their own ids", async () => {
+    const email = randomGmail();
+    const res = await postJson("/api/admin/accounts", { name: "Late Admin", email, password: PASSWORD });
+    assert.equal(res.status, 201);
+    const doc = await admins().findOne({ email });
+    assert.equal(doc.role, "admin");
+    assert.notEqual(doc._id, "admin-initial");
+    assert.deepEqual((await json("GET", `${base}/api/admin/setup`)).data, { adminExists: true, open: true });
+    // Removed again so the counts below only see the first Admin and the accounts it creates.
+    await admins().deleteOne({ email });
   });
 
-  test("the setup API reports setup as closed", async () => {
-    const status = await json("GET", `${base}/api/admin/setup`);
-    assert.deepEqual(status.data, { adminExists: true, open: false, keyConfigured: true });
-  });
-
-  describe("unauthorized admin creation", () => {
-    test("no session cannot create an admin", async () => {
-      const res = await postJson("/api/admin/accounts", { setupKey: TEST_SETUP_KEY, name: "Intruder", email: randomGmail(), password: PASSWORD, confirm: PASSWORD });
-      assert.equal(res.status, 403);
-      assert.equal(await admins().countDocuments(), 1);
+  describe("what a sign-up cannot do", () => {
+    test("a role or restaurant sent with a sign-up is ignored", async () => {
+      const email = randomGmail();
+      const res = await postJson("/api/admin/accounts", { name: "Role Picker", email, password: PASSWORD, role: "owner" });
+      assert.equal(res.status, 201);
+      const doc = await admins().findOne({ email });
+      assert.equal(doc.role, "admin");
+      assert.equal(doc.restaurantId, undefined);
+      await admins().deleteOne({ email });
     });
 
-    test("a forged or malformed admin cookie cannot create an admin", async () => {
+    test("a forged admin cookie does not let a request act as an existing Admin", async () => {
+      // With a forged cookie the request is simply signed out: it cannot create an Owner as that Admin.
       const res = await postJson(
         "/api/admin/accounts",
-        { setupKey: TEST_SETUP_KEY, name: "Intruder", email: randomGmail(), password: PASSWORD, confirm: PASSWORD },
+        { name: "Forger", email: randomGmail(), password: PASSWORD, restaurantId: "rest-anything" },
         "meg_admin_session=eyJzdWIiOiJhZG1pbi1pbml0aWFsIn0.forgedsignature",
       );
-      assert.equal(res.status, 403);
-      assert.equal(await admins().countDocuments(), 1);
-    });
-
-    test("a customer session cannot create an admin", async () => {
-      const signup = await postJson("/api/customers", {
-        name: "Shop Customer",
-        email: randomCustomerEmail(),
-        phone: "03001234567",
-        password: PASSWORD,
-        confirm: PASSWORD,
-      });
-      assert.equal(signup.status, 201);
-      const customerCookie = cookieFrom(signup, "meg_customer_session");
-      assert.ok(customerCookie);
-
-      const res = await postJson("/api/admin/accounts", { name: "Sneaky", email: randomGmail(), password: PASSWORD, confirm: PASSWORD }, customerCookie);
-      assert.equal(res.status, 403);
+      const body = await res.json();
+      assert.notEqual(body.account?.role, "owner");
+      if (body.account) await admins().deleteOne({ _id: body.account.id });
       assert.equal(await admins().countDocuments(), 1);
     });
 

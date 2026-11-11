@@ -7,7 +7,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { chromium } from "playwright-core";
-import { TEST_PASSWORD, TEST_SETUP_KEY, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
+import { TEST_PASSWORD, cookieFrom, json, randomGmail, signUpCustomer, startTestEnvironment } from "./harness.mjs";
 
 const CHROME = process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const NEW_PASSWORD = "NewPass456";
@@ -51,7 +51,7 @@ before(async () => {
   base = env.base;
 
   const admin = await json("POST", `${base}/api/admin/accounts`, {
-    body: { setupKey: TEST_SETUP_KEY, name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
+    body: { name: "Test Admin", email: randomGmail(), password: TEST_PASSWORD, confirm: TEST_PASSWORD },
   });
   assert.equal(admin.status, 201);
   adminCookie = cookieFrom(admin.res, "meg_admin_session");
@@ -167,8 +167,9 @@ describe("orders", () => {
     await page.getByText(confirmedOrder.id).first().waitFor();
     await page.getByRole("button", { name: /^All/ }).click();
     await page.getByRole("link", { name: "View details" }).first().click();
+    // The list page already has a level-1 heading, so wait for the URL itself rather than any heading.
+    await page.waitForURL(/\/account\/orders\/MEG-\d{6}$/);
     await page.getByRole("heading", { level: 1 }).waitFor();
-    assert.match(page.url(), /\/account\/orders\/MEG-\d{6}$/);
   });
 });
 

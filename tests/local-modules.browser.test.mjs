@@ -9,7 +9,7 @@ import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chromium } from "playwright-core";
-import { TEST_SETUP_KEY, startTestEnvironment } from "./harness.mjs";
+import { startTestEnvironment } from "./harness.mjs";
 
 const CHROME_CANDIDATES = [
   process.env.CHROME_PATH,
@@ -1027,7 +1027,7 @@ test("old browser data is removed on load and cannot sign anyone in", async () =
   }
 });
 
-test("first-Admin sign-up validates input and closes once an Admin exists", async () => {
+test("Admin sign-up validates input and stays open once an Admin exists", async () => {
   const { context, page, problems } = await openPage();
   try {
     await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
@@ -1046,22 +1046,18 @@ test("first-Admin sign-up validates input and closes once an Admin exists", asyn
     await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
     assert.equal((await stored("admins")).length, 1);
 
-    // Setup is closed now, even with the right key.
-    const second = await page.evaluate(async (setupKey) => {
-      const res = await fetch("/api/admin/accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ setupKey, name: "Second", email: "second.admin@gmail.com", password: "Passw0rd!", confirm: "Passw0rd!" }),
-        credentials: "omit",
-      });
-      return res.status;
-    }, TEST_SETUP_KEY);
-    assert.equal(second, 403);
-    assert.equal((await stored("admins")).length, 1);
+    // Sign-up stays open: a signed-out visitor creates a second Admin from the same form.
     await context.clearCookies();
     await page.goto(`${base}/admin/signup`, { waitUntil: "load" });
-    await page.getByRole("heading", { name: "Admin Sign Up Closed" }).waitFor({ timeout: 15000 });
-    assert.equal(await page.locator("#admin-signup-name").count(), 0);
+    await page.getByRole("heading", { name: "Create Admin Account" }).waitFor({ timeout: 15000 });
+    await page.locator("#admin-signup-name").fill("Second Admin");
+    await page.locator("#admin-signup-email").fill("second.admin@gmail.com");
+    await page.locator("#admin-signup-password").fill("Passw0rd!");
+    await page.getByRole("button", { name: "Create Admin Account" }).click();
+    await page.waitForURL(/\/admin(\/)?$/, { timeout: 20000 });
+    const admins = await stored("admins");
+    assert.equal(admins.length, 2);
+    assert.ok(admins.every((a) => a.role === "admin" && a.passwordHash.startsWith("pbkdf2$")));
     assert.deepEqual(problems, []);
   } finally {
     await context.close();

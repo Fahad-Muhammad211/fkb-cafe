@@ -4,13 +4,12 @@
 
 import "server-only";
 import { MongoError } from "mongodb";
-import { readBody, apiError, json, text, trustedClientIp, isLoopbackRequest } from "@/lib/server/http";
-import { DatabaseConfigError, DatabaseUnavailableError } from "@/lib/server/collections";
+import { readBody, apiError, json, text, trustedClientIp } from "@/lib/server/http";
+import { DatabaseConfigError, DatabaseUnavailableError, databaseErrorResponse } from "@/lib/server/collections";
 import { createCustomer, verifyCustomer, changeCustomerPassword, listCustomers, updateCustomerProfile } from "@/lib/server/customers";
-import { createInitialAdminAccount, createManagerAccount, createOwnerAccount, deleteOwnerAccount, hasAdminAccounts, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/server/adminAccounts";
+import { createAdditionalAdminAccount, createAdminSignupAccount, createManagerAccount, createOwnerAccount, deleteOwnerAccount, hasAdminAccounts, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/server/adminAccounts";
 import { endAdminSession, getAdminSession, startAdminSession } from "@/lib/server/adminSession";
 import { endSessionsFor } from "@/lib/server/session";
-import { isSetupKeyConfigured } from "@/lib/server/setupKey";
 import { endCustomerSession, getCustomerSession, startCustomerSession } from "@/lib/server/customerSession";
 import { checkStaff } from "@/lib/server/staff";
 import { readCatalog, replaceCategories, replaceProducts } from "@/lib/server/catalog";
@@ -36,6 +35,8 @@ type Handler = (request: Request, params: string[]) => Promise<Response>;
 type Route = { method: string; pattern: RegExp; handler: Handler };
 
 const LOGIN_BLOCKED = "Too many failed attempts. Please wait 15 minutes and try again.";
+// POST /api/admin/admins is for a signed-in Admin; anyone else can use the public sign-up instead.
+const ADDITIONAL_ADMIN_REFUSED = "Only a signed-in Admin can use this. To create an Admin account, use Sign Up on /admin/login.";
 const LOG_IN = "Please log in first.";
 
 // Failed attempts allowed per visitor IP (all accounts together) when a trusted proxy reports the IP.
@@ -426,15 +427,10 @@ const routes: Route[] = [
     handler: async () => json({ session: await getAdminSession() }),
   },
   {
-    // Whether first-Admin setup is open for this visitor: only while no Admin exists, ADMIN_SETUP_KEY is
-    // configured, and the request comes from this machine.
+    // Admin sign-up status. Public Admin sign-up is always open, so `open` is always true.
     method: "GET",
     pattern: /^\/api\/admin\/setup$/,
-    handler: async (request) => {
-      const adminExists = await hasAdminAccounts();
-      const keyConfigured = isSetupKeyConfigured();
-      return json({ adminExists, open: !adminExists && keyConfigured && isLoopbackRequest(request), keyConfigured });
-    },
+    handler: async () => json({ adminExists: await hasAdminAccounts(), open: true }),
   },
   {
     method: "POST",
@@ -492,20 +488,38 @@ const routes: Route[] = [
         }
         return json({ ok: true, account: result.account }, 201);
       }
-      // First-Admin setup. Open only while no Admin exists, the server has ADMIN_SETUP_KEY configured, and
-      // the request comes from this machine (see isLoopbackRequest). The key is read from the server
-      // environment only; it is never sent to or asked of the browser, and any setupKey in the body is
-      // ignored. Once the first Admin exists this path is closed for good.
-      if (await hasAdminAccounts()) return apiError(403, "Admin signup is closed. Ask an owner to create your account.");
-      if (!isSetupKeyConfigured() || !isLoopbackRequest(request)) return apiError(403, "Admin signup is not available.");
-      // The sign-up form asks for the password once, so there is no separate confirmation to compare.
-      const result = await createInitialAdminAccount({ ...input, confirm: input.password });
+      // Public Admin sign-up: open to anyone, any number of times, with no first-Admin limit and no setup
+      // key. The new account is an Admin (the role is never read from the request), its password is stored
+      // as a PBKDF2 hash, and it is signed in. The form asks for the password once, so there is no
+      // separate confirmation to compare.
+      const result = await createAdminSignupAccount({ ...input, confirm: input.password });
       if (!result.ok) {
-        if ("closed" in result) return apiError(403, "Admin signup is closed. Ask an owner to create your account.");
+        if ("closed" in result) return apiError(403, "Admin sign-up failed. Please try again.");
         return apiError(400, "Please correct the highlighted fields.", result.errors);
       }
       await startAdminSession(result.account.id);
       return json({ ok: true, account: result.account, redirect: homeForRole(result.account.role) }, 201);
+    },
+  },
+  {
+    // A signed-in Admin creates another Admin from the Sign Up page: { name, email, password }. Only the
+    // Admin role passes checkStaff, the role is fixed here, and the creator's own session is left as it is.
+    method: "POST",
+    pattern: /^\/api\/admin\/admins$/,
+    handler: async (request) => {
+      const check = await checkStaff("staff");
+      if (!check.ok) return apiError(check.status, ADDITIONAL_ADMIN_REFUSED);
+      const body = await readBody(request);
+      if (!body) return apiError(400, "Invalid request.");
+      const result = await createAdditionalAdminAccount(
+        { name: text(body.name), email: text(body.email), password: text(body.password) },
+        { id: check.session.id, name: check.session.name },
+      );
+      if (!result.ok) {
+        if ("closed" in result) return apiError(403, ADDITIONAL_ADMIN_REFUSED);
+        return apiError(400, "Please correct the highlighted fields.", result.errors);
+      }
+      return json({ ok: true, account: result.account }, 201);
     },
   },
   {
@@ -834,8 +848,9 @@ export async function handleApi(request: Request): Promise<Response> {
     return await route.handler(request, params);
   } catch (err) {
     if (err instanceof DatabaseConfigError || err instanceof DatabaseUnavailableError) {
-      console.error(`[api] ${err.message}`);
-      return apiError(503, "The service is unavailable right now. Please try again shortly.");
+      // Says which problem it is (not configured, blocked by Atlas, DNS, credentials, timeout) without
+      // any secret; the full redacted detail goes to the server log.
+      return databaseErrorResponse(err, "api");
     }
     if (err instanceof MongoError) {
       console.error(`[api] database request failed: ${err.name}${err.code === undefined ? "" : ` (code ${String(err.code)})`}`);

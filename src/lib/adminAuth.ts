@@ -25,9 +25,15 @@ async function send(url: string, method: "POST" | "DELETE", body?: unknown): Pro
   }
 }
 
-// First-Admin signup. No setup key is sent: the server checks ADMIN_SETUP_KEY in its own environment.
+// Public Admin sign-up. The server creates an Admin and signs them in.
 export function adminSignupRequest(input: { name: string; email: string; password: string }) {
   return send("/api/admin/accounts", "POST", input);
+}
+
+// Another Admin, created by the signed-in Admin. The server checks the caller's session and role; the
+// caller stays signed in as themselves.
+export function additionalAdminRequest(input: { name: string; email: string; password: string }) {
+  return send("/api/admin/admins", "POST", input);
 }
 
 export function adminLoginRequest(email: string, password: string) {

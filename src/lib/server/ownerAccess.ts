@@ -4,7 +4,7 @@ import { getAdminSession } from "@/lib/server/adminSession";
 import { findStaffMember } from "@/lib/server/adminAccounts";
 import { findRestaurant } from "@/lib/server/restaurants";
 import { apiError } from "@/lib/server/http";
-import { DatabaseConfigError, DatabaseUnavailableError } from "@/lib/server/collections";
+import { DatabaseConfigError, DatabaseUnavailableError, databaseErrorResponse } from "@/lib/server/collections";
 import { MongoError } from "mongodb";
 
 // Access rules for the Owner dashboard, the POS and the Kitchen Display Screen.
@@ -55,7 +55,9 @@ export function ownerRoute<P>(handler: (request: Request, ctx: OwnerContext, par
       const check = await requireOwner();
       response = check.ok ? await handler(request, check.ctx, await context.params) : check.response;
     } catch (err) {
-      if (err instanceof DatabaseConfigError || err instanceof DatabaseUnavailableError || err instanceof MongoError) {
+      if (err instanceof DatabaseConfigError || err instanceof DatabaseUnavailableError) {
+        response = databaseErrorResponse(err, "owner-api");
+      } else if (err instanceof MongoError) {
         console.error(`[owner-api] database error: ${err.name}`);
         response = apiError(503, "The service is unavailable right now. Please try again shortly.");
       } else {

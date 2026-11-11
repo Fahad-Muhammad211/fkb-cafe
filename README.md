@@ -10,7 +10,7 @@ Requires Node.js 20.9 or later and a MongoDB database (for example MongoDB Atlas
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in MONGODB_URI, MONGODB_DB and ADMIN_SETUP_KEY
+cp .env.example .env.local   # then fill in MONGODB_URI and MONGODB_DB
 npm run db:ping              # read-only connection check
 npm run dev                  # http://localhost:3000
 ```
@@ -42,13 +42,13 @@ All accounts, sessions and business records are stored in MongoDB and are only r
 
 The browser's localStorage keeps only personal preferences: the guest cart (`meg-cart-v1`) and the chosen delivery location (`meg-location-v1`). Data saved in localStorage by older versions of the app (`meg-local:*`, `meg.session.*`, cached menu and orders) is deleted automatically the next time the app loads.
 
-## Setting up the first Admin
+## Admin accounts
 
-1. Set `ADMIN_SETUP_KEY` in `.env.local` (or your host's environment settings) to a random value of at least 16 characters, and restart the app.
-2. On the same machine as the server, open `http://localhost:3000/admin/login`, click **Sign Up** and enter your Full Name, Email (Gmail) and Password. The key is never typed into or shown in the page; the server only checks that it is configured. You are signed in and taken to the Admin dashboard.
-3. Sign-up closes for good once the first Admin exists; the Sign Up view then says it is closed. Owners and Managers are added by the Admin from the Employees page (each belongs to one restaurant and works in `/owner`). You can remove `ADMIN_SETUP_KEY` afterwards.
+Open `/admin/login`, click **Sign Up** and enter your Full Name, Email (Gmail) and Password. The account is saved in MongoDB with a hashed password, and you are signed in and taken to the Admin dashboard. Sign-up stays open: any number of Admin accounts can be created, with no setup key. A signed-in Admin can also create another Admin at `/admin/signup` without being signed out. Owners and Managers are added by an Admin from the Employees page (each belongs to one restaurant and works in `/owner`).
 
-First-Admin sign-up is accepted only while `ADMIN_SETUP_KEY` is set, no Admin exists, and the request comes from the server's own machine (a hosted site behind `TRUSTED_PROXY_HOPS` never qualifies). Without a trusted proxy that check relies on request headers, which a hand-crafted request could fake, so until the first Admin exists run the dev server with `next dev -H 127.0.0.1` to keep other machines out entirely. Only the Admin can open `/admin` and its APIs; Owners and Managers are sent to `/owner`.
+> **Warning:** Admin sign-up is public. Anyone who can reach the site can create an Admin account and get full access to every customer, order, restaurant and staff account. Do not expose a deployment with real data to the internet like this.
+
+Only Admins can open `/admin` and its APIs; Owners and Managers are sent to `/owner`. One Admin cannot switch off or delete another Admin from the Employees page.
 
 ## Login rate limiting
 

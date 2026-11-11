@@ -1,7 +1,7 @@
 // Staff roles and the Admin dashboard sections. Shared by the data handlers (route and page checks) and
 // the browser (which sections to show).
 //
-// "admin" is the account created by the one-time first-Admin setup. Only the Admin may open the Admin
+// "admin" accounts are created by Admin sign-up at /admin/login. Only an Admin may open the Admin
 // dashboard (/admin) and its APIs. "owner" and "manager" accounts belong to one restaurant and work in
 // the restaurant dashboard (/owner), limited to that restaurant (see lib/server/ownerAccess.ts). The
 // Admin creates both from the Employees page. Accounts saved with the old pre-restaurant "manager" role
