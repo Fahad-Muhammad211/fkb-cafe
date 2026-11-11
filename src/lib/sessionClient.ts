@@ -7,8 +7,12 @@ export type { StaffSession };
 // httpOnly cookie), so the browser keeps no account or session data of its own. A failed request
 // throws, and useSession treats that as signed out.
 
+// The server gives up on the database after 8 seconds and answers 503, so a request still open after
+// this long is stuck; it is abandoned (and treated as signed out) rather than leaving the page loading.
+const SESSION_TIMEOUT_MS = 15_000;
+
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+  const res = await fetch(url, { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(SESSION_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`${url} answered ${res.status}`);
   return (await res.json()) as T;
 }
