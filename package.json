@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "node --test --test-concurrency=1 tests/auth-security.test.mjs tests/admin-auth.test.mjs tests/admin-setup.test.mjs tests/customer-dashboard.test.mjs tests/customer-dashboard.browser.test.mjs tests/manager-accounts.test.mjs tests/owner-settings.test.mjs tests/local-modules.browser.test.mjs tests/database-errors.test.mjs",
     "db:ping": "node --env-file=.env.local scripts/db-ping.mjs",
-    "db:backup": "node --env-file=.env.local scripts/backup-db.mjs"
+    "db:backup": "node --env-file=.env.local scripts/backup-db.mjs",
+    "seed:staff": "node scripts/seed-demo-staff.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.61.0",

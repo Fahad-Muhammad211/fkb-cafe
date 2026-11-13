@@ -3,7 +3,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
-import { additionalAdminRequest, adminLoginRequest, adminSignupRequest } from "@/lib/adminAuth";
+import { additionalAdminRequest, adminLoginRequest, adminSignupRequest, demoLoginRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
 import { isValidName, isValidPassword } from "@/lib/validation";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
@@ -66,30 +66,21 @@ const submitClass =
   "rounded-full bg-[#ffd400] px-6 py-3 text-sm font-bold text-black transition-all duration-200 hover:brightness-95 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70";
 
 export function AdminLoginForm({ onSignUp }: { onSignUp: () => void }) {
+  // Demo login by default: type a name and enter. Managers who were given a Gmail login switch to the
+  // email and password form.
+  const [mode, setMode] = useState<"name" | "email">("name");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const found: Errors = {};
-    if (!email.trim()) found.email = "Please enter your email.";
-    if (!password) found.password = "Please enter your password.";
-    setErrors(found);
-    if (Object.keys(found).length > 0) {
-      document.getElementById(found.email ? "admin-login-email" : "admin-login-password")?.focus();
-      return;
-    }
-
-    setPending(true);
-    const result = await adminLoginRequest(email, password);
+  const finish = (result: Awaited<ReturnType<typeof adminLoginRequest>>) => {
     setPending(false);
     if (result.ok) {
       setPassword("");
-      // Full page load so the server guard re-checks the new session cookie. The server says where
-      // this account belongs: the Admin dashboard, or the Owner dashboard for an Owner.
-      // Shared browsers keep no order list from the previous staff member.
+      // Full page load so the server guard re-checks the new session cookie. Shared browsers keep no
+      // order list from the previous person.
       saveAllOrders([]);
       window.location.replace(result.redirect);
     } else {
@@ -97,39 +88,97 @@ export function AdminLoginForm({ onSignUp }: { onSignUp: () => void }) {
     }
   };
 
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const found: Errors = {};
+    if (mode === "name") {
+      if (name.trim().length < 2) found.name = "Enter your name or your restaurant's name.";
+    } else {
+      if (!email.trim()) found.email = "Please enter your email.";
+      if (!password) found.password = "Please enter your password.";
+    }
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      document.getElementById(found.name ? "admin-login-name" : found.email ? "admin-login-email" : "admin-login-password")?.focus();
+      return;
+    }
+    setPending(true);
+    finish(mode === "name" ? await demoLoginRequest(name) : await adminLoginRequest(email, password));
+  };
+
+  const switchMode = () => {
+    setErrors({});
+    setMode(mode === "name" ? "email" : "name");
+  };
+
   return (
-    <AuthFrame title="Admin Login" footer={<SwitchView prompt="Don't have an account?" label="Sign Up" onClick={onSignUp} />}>
+    <AuthFrame
+      title="Admin Login"
+      footer={
+        mode === "name" ? (
+          <SwitchView prompt="Manager with a Gmail login?" label="Sign in with email" onClick={switchMode} />
+        ) : (
+          <>
+            <SwitchView prompt="Testing the dashboard?" label="Enter with a name" onClick={switchMode} />
+            <span className="mx-2 text-zinc-600">·</span>
+            <SwitchView prompt="" label="Sign Up" onClick={onSignUp} />
+          </>
+        )
+      }
+    >
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         <ErrorBanner message={errors.form ?? null} />
 
-        <FormField id="admin-login-email" label="Email" error={errors.email}>
-          <input
-            id="admin-login-email"
-            type="email"
-            autoComplete="username"
-            placeholder="you@gmail.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            aria-invalid={Boolean(errors.email)}
-            aria-describedby={describedBy("admin-login-email", errors.email)}
-            className={inputClass}
-          />
-        </FormField>
+        {mode === "name" ? (
+          <>
+            <FormField id="admin-login-name" label="Your name or restaurant name" error={errors.name}>
+              <input
+                id="admin-login-name"
+                autoComplete="organization"
+                placeholder="e.g. Ali or Karachi Grill House"
+                value={name}
+                maxLength={60}
+                autoFocus
+                onChange={(e) => setName(e.target.value)}
+                aria-invalid={Boolean(errors.name)}
+                aria-describedby={describedBy("admin-login-name", errors.name)}
+                className={inputClass}
+              />
+            </FormField>
+            <p className="-mt-2 text-xs text-zinc-500">Demo access: no password needed. You enter as the Owner and can try every feature.</p>
+          </>
+        ) : (
+          <>
+            <FormField id="admin-login-email" label="Email" error={errors.email}>
+              <input
+                id="admin-login-email"
+                type="email"
+                autoComplete="username"
+                placeholder="you@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                aria-invalid={Boolean(errors.email)}
+                aria-describedby={describedBy("admin-login-email", errors.email)}
+                className={inputClass}
+              />
+            </FormField>
 
-        <FormField id="admin-login-password" label="Password" error={errors.password}>
-          <PasswordInput
-            id="admin-login-password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            aria-invalid={Boolean(errors.password)}
-            aria-describedby={describedBy("admin-login-password", errors.password)}
-            className={inputClass}
-          />
-        </FormField>
+            <FormField id="admin-login-password" label="Password" error={errors.password}>
+              <PasswordInput
+                id="admin-login-password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-invalid={Boolean(errors.password)}
+                aria-describedby={describedBy("admin-login-password", errors.password)}
+                className={inputClass}
+              />
+            </FormField>
+          </>
+        )}
 
         <button type="submit" disabled={pending} className={submitClass}>
-          {pending ? "Logging in…" : "Login"}
+          {pending ? "Opening…" : mode === "name" ? "Enter dashboard" : "Login"}
         </button>
       </form>
     </AuthFrame>

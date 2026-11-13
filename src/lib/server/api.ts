@@ -8,8 +8,9 @@ import { readBody, apiError, json, text, trustedClientIp } from "@/lib/server/ht
 import { DatabaseConfigError, DatabaseUnavailableError, databaseErrorResponse } from "@/lib/server/collections";
 import { createCustomer, verifyCustomer, changeCustomerPassword, listCustomers, updateCustomerProfile } from "@/lib/server/customers";
 import { createAdditionalAdminAccount, createAdminSignupAccount, createManagerAccount, createOwnerAccount, deleteOwnerAccount, hasAdminAccounts, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/server/adminAccounts";
-import { endAdminSession, getAdminSession, startAdminSession } from "@/lib/server/adminSession";
+import { endAdminSession, getAdminSession, cleanDemoName, demoAccount, startAdminSession, startDemoSession } from "@/lib/server/adminSession";
 import { endSessionsFor } from "@/lib/server/session";
+import { addPayEntry, changeAttendance, readAttendanceDay, readPayroll, readStaffProfile, removePayEntry, setPayrollPaid } from "@/lib/server/staffHr";
 import { endCustomerSession, getCustomerSession, startCustomerSession } from "@/lib/server/customerSession";
 import { checkStaff } from "@/lib/server/staff";
 import { readCatalog, replaceCategories, replaceProducts } from "@/lib/server/catalog";
@@ -441,6 +442,13 @@ const routes: Route[] = [
     pattern: /^\/api\/admin\/session$/,
     handler: async (request) => {
       const body = await readBody(request);
+      // Demo login: only a name (the tester's or the restaurant's), no email or password.
+      if (body && body.email === undefined && body.password === undefined) {
+        const name = cleanDemoName(body.name);
+        if (!name) return apiError(400, "Please correct the highlighted fields.", { name: "Enter your name or your restaurant's name (2 to 60 characters)." });
+        await startDemoSession(name);
+        return json({ ok: true, account: demoAccount(name), redirect: homeForRole("admin") });
+      }
       const email = text(body?.email);
       const password = text(body?.password);
       if (!email.trim() || !password) {
@@ -916,6 +924,15 @@ function cafeRoutes(): Route[] {
     }),
     cafeRoute("PATCH", /^\/api\/admin\/cafe-staff\/([^/]+)$/, "staff", async (r, [id]) => updateStaffRecord(id, await body(r))),
     cafeRoute("DELETE", /^\/api\/admin\/cafe-staff\/([^/]+)$/, "staff", async (_r, [id]) => removeStaffRecord(id)),
+
+    // Attendance, pay entries and payroll (lib/server/staffHr.ts): Owner only, like salaries.
+    cafeRead(/^\/api\/admin\/hr\/attendance$/, "staff", async (r) => readAttendanceDay(new URL(r.url).searchParams.get("date"))),
+    cafeRoute("POST", /^\/api\/admin\/hr\/attendance\/([^/]+)$/, "staff", async (r, [id]) => changeAttendance(id, await body(r))),
+    cafeRead(/^\/api\/admin\/hr\/payroll$/, "staff", async (r) => readPayroll(new URL(r.url).searchParams.get("month"))),
+    cafeRoute("PUT", /^\/api\/admin\/hr\/payroll\/([^/]+)$/, "staff", async (r, [id]) => setPayrollPaid(id, await body(r))),
+    cafeRoute("POST", /^\/api\/admin\/hr\/pay$/, "staff", async (r) => addPayEntry(await body(r))),
+    cafeRoute("DELETE", /^\/api\/admin\/hr\/pay\/([^/]+)$/, "staff", async (_r, [id]) => removePayEntry(id)),
+    cafeRead(/^\/api\/admin\/hr\/staff\/([^/]+)$/, "staff", async (r, [id]) => readStaffProfile(id, new URL(r.url).searchParams.get("month"))),
 
     // Dashboard: Owner only
     cafeRead(/^\/api\/admin\/dashboard$/, "home", (r) => readDashboard(new URL(r.url).searchParams.get("today"))),

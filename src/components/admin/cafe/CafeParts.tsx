@@ -114,8 +114,14 @@ export function useAlertBeep(count: number) {
 }
 
 export function Dialog({ title, onClose, children, wide }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const overlay = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Escape closes only the top dialog when one is opened from another.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const open = document.querySelectorAll("[data-dialog-overlay]");
+      if (open[open.length - 1] === overlay.current) onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -123,6 +129,8 @@ export function Dialog({ title, onClose, children, wide }: { title: ReactNode; o
   // "fixed" relative to the page content instead of the screen.
   return createPortal(
     <div
+      ref={overlay}
+      data-dialog-overlay=""
       className="animate-fade-in fixed inset-0 z-[100] flex items-end justify-center bg-black/70 backdrop-blur-sm md:items-center md:p-6"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >

@@ -39,6 +39,16 @@ export interface CafeStaff {
   accountId: string | null;
   email: string | null;
   createdAt: string;
+  // HR details. Older records may not have them; the server fills defaults.
+  code: string; // employee number, e.g. EMP-007
+  department: string;
+  shiftStart: string; // "HH:MM"
+  shiftEnd: string; // "HH:MM"
+  offDay: string; // weekday name or ""
+  joinedOn: string; // YYYY-MM-DD or ""
+  allowance: number; // fixed monthly allowance / incentive in PKR
+  cnic: string;
+  emergencyContact: string;
 }
 
 export interface WaiterStats {

@@ -42,6 +42,11 @@ export function adminLoginRequest(email: string, password: string) {
   return send("/api/admin/session", "POST", { email, password });
 }
 
+// Demo login: just a name (the tester's or the restaurant's). Opens the Owner dashboard.
+export function demoLoginRequest(name: string) {
+  return send("/api/admin/session", "POST", { name });
+}
+
 export function adminLogoutRequest() {
   return send("/api/admin/session", "DELETE");
 }

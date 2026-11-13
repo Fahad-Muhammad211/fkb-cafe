@@ -1,6 +1,7 @@
 import type { CafeHistory, CafeOrder, CafeSnapshot, CafeStaff, CafeStaffKind, WaiterStats } from "@/lib/cafeTypes";
 import type { StockSnapshot } from "@/lib/stockTypes";
 import type { DashboardData } from "@/lib/dashboardTypes";
+import type { AttendanceRecord, AttendanceStatus, PayEntry, PayType, PayrollMonth, PayrollRow, StaffProfileData } from "@/lib/staffTypes";
 
 // Browser-side client for the Admin cafe API (/api/admin/cafe/...). Every call needs an Admin session;
 // the server checks it and prices every order from the saved menu.
@@ -60,7 +61,37 @@ export const stockApi = {
   saveRecipe: (productId: string, lines: { itemId: string; qty: number }[]) => call(`/api/admin/stock/recipes/${id(productId)}`, "PUT", { lines }),
 };
 
-export type StaffInput = { name: string; title: string; duty: string; salary: string | number; phone: string; email?: string; password?: string };
+export type StaffInput = {
+  name: string;
+  title: string;
+  duty: string;
+  salary: string | number;
+  phone: string;
+  email?: string;
+  password?: string;
+  department?: string;
+  shiftStart?: string;
+  shiftEnd?: string;
+  offDay?: string;
+  joinedOn?: string;
+  allowance?: string | number;
+  cnic?: string;
+  emergencyContact?: string;
+};
+
+export const hrApi = {
+  attendance: (date: string) => call<AttendanceRecord[]>(`/api/admin/hr/attendance?date=${id(date)}`),
+  checkIn: (staffId: string, date: string, time: string) => call<{ value: AttendanceRecord }>(`/api/admin/hr/attendance/${id(staffId)}`, "POST", { action: "in", date, time }),
+  checkOut: (staffId: string, date: string, time: string) => call<{ value: AttendanceRecord }>(`/api/admin/hr/attendance/${id(staffId)}`, "POST", { action: "out", date, time }),
+  setDay: (staffId: string, body: { date: string; status: AttendanceStatus; checkIn?: string | null; checkOut?: string | null; note?: string }) =>
+    call<{ value: AttendanceRecord }>(`/api/admin/hr/attendance/${id(staffId)}`, "POST", { action: "set", ...body }),
+  clearDay: (staffId: string, date: string) => call(`/api/admin/hr/attendance/${id(staffId)}`, "POST", { action: "clear", date }),
+  payroll: (month: string) => call<PayrollMonth>(`/api/admin/hr/payroll?month=${id(month)}`),
+  setPaid: (staffId: string, month: string, paid: boolean) => call<{ value: PayrollRow }>(`/api/admin/hr/payroll/${id(staffId)}`, "PUT", { month, paid }),
+  addPay: (body: { staffId: string; date: string; type: PayType; amount: number | string; note: string }) => call<{ value: PayEntry }>("/api/admin/hr/pay", "POST", body),
+  removePay: (payId: string) => call(`/api/admin/hr/pay/${id(payId)}`, "DELETE"),
+  profile: (staffId: string, month: string) => call<StaffProfileData>(`/api/admin/hr/staff/${id(staffId)}?month=${id(month)}`),
+};
 
 export const staffApi = {
   list: () => call<CafeStaff[]>("/api/admin/cafe-staff"),

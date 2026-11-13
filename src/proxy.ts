@@ -4,11 +4,12 @@ import { NextResponse, type NextRequest } from "next/server";
 // Admin login by the server, so they never wait on the client-side "Checking admin session…" screen (which
 // needs JavaScript to finish). This only looks at whether the cookie exists. The real check (is the
 // session valid, is the account an active Admin) still happens on the server in every /api/admin route
-// and in the page guards. Must match SESSION_COOKIES.admin in lib/server/session.ts.
-const ADMIN_SESSION_COOKIE = "meg_admin_session";
+// and in the page guards. Must match SESSION_COOKIES.admin in lib/server/session.ts and the demo
+// (name-only) login cookie in lib/server/adminSession.ts.
+const ADMIN_SESSION_COOKIES = ["meg_admin_session", "meg_admin_demo"];
 
 export function proxy(request: NextRequest) {
-  if (request.cookies.has(ADMIN_SESSION_COOKIE)) return NextResponse.next();
+  if (ADMIN_SESSION_COOKIES.some((name) => request.cookies.has(name))) return NextResponse.next();
   return NextResponse.redirect(new URL("/admin/login", request.url));
 }
 
