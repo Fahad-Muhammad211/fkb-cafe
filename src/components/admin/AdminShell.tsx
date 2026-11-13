@@ -8,6 +8,7 @@ import { adminLogoutRequest } from "@/lib/adminAuth";
 import { saveAllOrders } from "@/lib/orders";
 import { ROLE_LABELS, SECTIONS, canAccess, type StaffRole } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { DatabaseBanner } from "@/components/admin/DatabaseBanner";
 
 const ICONS: Record<string, LucideIcon> = {
   "/admin": LayoutDashboard,
@@ -37,7 +38,10 @@ export function AdminShell({ session, children }: { session: ShellSession; child
       <Suspense fallback={null}>
         <Sidebar session={session} />
       </Suspense>
-      <main className="mx-auto w-full max-w-7xl px-4 pb-16 pt-20 md:px-6 lg:pt-10">{children}</main>
+      <main className="mx-auto w-full max-w-7xl px-4 pb-16 pt-20 md:px-6 lg:pt-10">
+        <DatabaseBanner className="mb-6" />
+        {children}
+      </main>
     </div>
   );
 }

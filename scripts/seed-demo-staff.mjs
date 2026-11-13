@@ -80,6 +80,7 @@ async function main() {
 
   const existing = new Map(((await api("/api/admin/cafe-staff")).data ?? []).map((s) => [s.name, s]));
   const people = [];
+  const fresh = new Set(); // only people added by this run get sample attendance and pay
   for (const [i, [kind, name, title, department, shiftStart, shiftEnd, offDay, salary, allowance, duty, joinedOn, email]] of TEAM.entries()) {
     if (existing.has(name)) {
       people.push({ ...existing.get(name) });
@@ -105,6 +106,7 @@ async function main() {
     const res = await api("/api/admin/cafe-staff", "POST", body);
     if (!res.ok) throw new Error(`Could not add ${name}: ${JSON.stringify(res.data)}`);
     people.push(res.data.value);
+    fresh.add(name);
   }
   console.log(`Staff ready: ${people.length}.`);
 
@@ -114,7 +116,7 @@ async function main() {
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   let days = 0;
-  for (const p of people) {
+  for (const p of people.filter((x) => fresh.has(x.name))) {
     for (let d = new Date(start); iso(d) <= today; d.setDate(d.getDate() + 1)) {
       const date = iso(d);
       if (date < p.joinedOn) continue;
@@ -166,20 +168,99 @@ async function main() {
     { name: "Gul Khan", date: `${lastMonth}-15`, type: "advance", amount: 5000, note: "Salary advance" },
   );
   for (const e of pay) {
-    if (e.date > today) continue;
+    if (e.date > today || !fresh.has(e.name)) continue;
     const res = await api("/api/admin/hr/pay", "POST", { staffId: byName.get(e.name).id, date: e.date, type: e.type, amount: e.amount, note: e.note });
     if (!res.ok) throw new Error(`Pay entry failed for ${e.name}: ${JSON.stringify(res.data)}`);
   }
-  console.log(`Pay entries recorded: ${pay.filter((e) => e.date <= today).length}.`);
+  console.log(`Pay entries recorded: ${pay.filter((e) => e.date <= today && fresh.has(e.name)).length}.`);
 
   // Last month has been paid out.
-  for (const p of people) await api(`/api/admin/hr/payroll/${encodeURIComponent(p.id)}`, "PUT", { month: lastMonth, paid: true });
+  for (const p of people.filter((x) => fresh.has(x.name))) await api(`/api/admin/hr/payroll/${encodeURIComponent(p.id)}`, "PUT", { month: lastMonth, paid: true });
   console.log(`Payroll for ${lastMonth} marked paid.`);
+
+  await seedStock();
 
   const payroll = await api(`/api/admin/hr/payroll?month=${thisMonth}`);
   const net = (payroll.data?.rows ?? []).reduce((t, r) => t + r.net, 0);
   console.log(`Payroll ${thisMonth} so far: ${payroll.data?.rows?.length} staff, net Rs. ${net.toLocaleString()}.`);
   await api("/api/admin/session", "DELETE");
+}
+
+// Kitchen stock with purchases, some usage and waste, and recipes for popular menu items, so the
+// Stock page and the dashboard's stock and profit figures have real numbers. Existing items are kept.
+// [name, unit, lowLevel, opening quantity, opening cost (total)]
+const STOCK = [
+  ["Chicken fillet", "kg", 8, 30, 33000],
+  ["Beef mince", "kg", 6, 20, 32000],
+  ["Fish fillet", "kg", 4, 12, 21600],
+  ["Burger buns", "pcs", 60, 240, 9600],
+  ["Tortilla wraps", "pcs", 40, 150, 6000],
+  ["Potatoes", "kg", 15, 60, 6600],
+  ["Cooking oil", "L", 10, 40, 22000],
+  ["Cheddar cheese slices", "pcs", 50, 300, 13500],
+  ["Mozzarella", "kg", 3, 10, 18000],
+  ["Lettuce", "kg", 2, 6, 1800],
+  ["Tomatoes", "kg", 4, 12, 2400],
+  ["Ketchup", "kg", 3, 10, 4500],
+  ["Mayonnaise", "kg", 3, 10, 6500],
+  ["Fettuccine pasta", "kg", 2, 8, 6400],
+  ["Cooking cream", "L", 2, 8, 7200],
+  ["Milk", "L", 10, 30, 6600],
+  ["Coffee beans", "kg", 1, 4, 22000],
+  ["Vanilla ice cream", "L", 4, 12, 9600],
+  ["Sugar", "kg", 5, 20, 3000],
+  ["Soft drink cans", "pcs", 48, 144, 14400],
+  ["Mineral water bottles", "pcs", 48, 120, 6000],
+  ["Takeaway boxes", "pcs", 100, 500, 10000],
+];
+
+// productId -> [[stock item name, quantity per portion]]
+const RECIPES = {
+  "meg-classic": [["Beef mince", 0.18], ["Burger buns", 1], ["Cheddar cheese slices", 1], ["Lettuce", 0.02], ["Tomatoes", 0.03], ["Mayonnaise", 0.02]],
+  smokehouse: [["Beef mince", 0.2], ["Burger buns", 1], ["Cheddar cheese slices", 2], ["Mayonnaise", 0.02]],
+  "chicken-fillet": [["Chicken fillet", 0.16], ["Burger buns", 1], ["Lettuce", 0.02], ["Mayonnaise", 0.02], ["Cooking oil", 0.05]],
+  "peri-peri": [["Chicken fillet", 0.16], ["Burger buns", 1], ["Lettuce", 0.02], ["Cooking oil", 0.05]],
+  "flaming-hot": [["Chicken fillet", 0.17], ["Burger buns", 1], ["Cheddar cheese slices", 1], ["Cooking oil", 0.05]],
+  "chipotle-wrap": [["Chicken fillet", 0.14], ["Tortilla wraps", 1], ["Lettuce", 0.03], ["Mayonnaise", 0.02]],
+  "garlic-mayo-wrap": [["Chicken fillet", 0.14], ["Tortilla wraps", 1], ["Mayonnaise", 0.03]],
+  "chicken-tenders": [["Chicken fillet", 0.15], ["Cooking oil", 0.06]],
+  "peri-peri-strips": [["Chicken fillet", 0.15], ["Cooking oil", 0.06]],
+  "mozzarella-sticks": [["Mozzarella", 0.12], ["Cooking oil", 0.05]],
+  "salted-fries": [["Potatoes", 0.25], ["Cooking oil", 0.06], ["Ketchup", 0.02]],
+  "curly-fries": [["Potatoes", 0.25], ["Cooking oil", 0.06]],
+  "chicken-loaded-fries": [["Potatoes", 0.25], ["Chicken fillet", 0.08], ["Cheddar cheese slices", 2], ["Cooking oil", 0.06]],
+  "fettuccine-alfredo": [["Fettuccine pasta", 0.15], ["Cooking cream", 0.12], ["Chicken fillet", 0.08], ["Mozzarella", 0.03]],
+  "vanilla-shake": [["Milk", 0.25], ["Vanilla ice cream", 0.15], ["Sugar", 0.02]],
+  "oreo-shake": [["Milk", 0.25], ["Vanilla ice cream", 0.15], ["Sugar", 0.02]],
+  cappuccino: [["Coffee beans", 0.018], ["Milk", 0.18], ["Sugar", 0.01]],
+  americano: [["Coffee beans", 0.018]],
+  "soft-drink": [["Soft drink cans", 1]],
+  "mineral-water": [["Mineral water bottles", 1]],
+};
+
+async function seedStock() {
+  const snapshot = (await api("/api/admin/stock")).data;
+  const byName = new Map((snapshot?.items ?? []).map((i) => [i.name.toLowerCase(), i]));
+  let added = 0;
+  for (const [name, unit, lowLevel, quantity, totalCost] of STOCK) {
+    if (byName.has(name.toLowerCase())) continue;
+    const res = await api("/api/admin/stock/items", "POST", { name, unit, lowLevel, quantity, totalCost });
+    if (!res.ok) throw new Error(`Stock item ${name} failed: ${JSON.stringify(res.data)}`);
+    byName.set(name.toLowerCase(), res.data.value);
+    added++;
+    const id = res.data.value.id;
+    // A second delivery at a slightly different price, then some kitchen use and a little waste.
+    await api(`/api/admin/stock/items/${id}/purchases`, "POST", { quantity: Math.round(quantity / 2), totalCost: Math.round((totalCost / 2) * 1.05), note: "Weekly supplier delivery" });
+    await api(`/api/admin/stock/items/${id}/usage`, "POST", { type: "usage", quantity: Math.round(quantity * 0.3 * 100) / 100, note: "Kitchen prep" });
+    if (["Lettuce", "Tomatoes", "Milk"].includes(name)) await api(`/api/admin/stock/items/${id}/usage`, "POST", { type: "waste", quantity: 1, note: "Spoiled" });
+  }
+  let recipes = 0;
+  for (const [productId, lines] of Object.entries(RECIPES)) {
+    const body = lines.map(([item, qty]) => ({ itemId: byName.get(item.toLowerCase())?.id, qty })).filter((l) => l.itemId);
+    const res = await api(`/api/admin/stock/recipes/${productId}`, "PUT", { lines: body });
+    if (res.ok) recipes++;
+  }
+  console.log(`Stock items added: ${added}. Recipes saved: ${recipes}.`);
 }
 
 main().catch((err) => {

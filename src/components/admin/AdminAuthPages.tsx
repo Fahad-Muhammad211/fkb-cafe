@@ -8,6 +8,7 @@ import { saveAllOrders } from "@/lib/orders";
 import { isValidName, isValidPassword } from "@/lib/validation";
 import { FormField, describedBy, inputClass } from "@/components/ui/FormField";
 import { PasswordInput } from "@/components/ui/PasswordInput";
+import { DatabaseBanner } from "@/components/admin/DatabaseBanner";
 
 type Errors = Record<string, string>;
 
@@ -33,6 +34,7 @@ function AuthFrame({ title, children, footer }: { title: string; children: React
             </span>
             <h1 className="text-3xl font-black uppercase tracking-tight">{title}</h1>
           </div>
+          <DatabaseBanner className="mb-4" />
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl shadow-black/40 md:p-8">{children}</div>
           <div className="mt-6 text-center text-sm text-zinc-400">{footer}</div>
         </div>

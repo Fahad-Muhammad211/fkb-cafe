@@ -1,5 +1,6 @@
 import "server-only";
 import { MongoClient, MongoServerSelectionError, type Collection, type Db, type Document, type IndexDescription } from "mongodb";
+import { memoryCollection } from "@/lib/server/memoryStore";
 
 // The app's records live in MongoDB (MONGODB_URI, database MONGODB_DB). This module runs on the
 // server only: the browser never talks to the database and never stores business data or sessions.
@@ -10,7 +11,7 @@ export type { Document };
 
 // One MongoDB client per server process. In development Next.js reloads modules often, so the client
 // is kept on globalThis; otherwise every reload would open another connection pool.
-const globalForMongo = globalThis as unknown as { megMongoClient?: Promise<MongoClient> };
+const globalForMongo = globalThis as unknown as { megMongoClient?: Promise<MongoClient>; megDemoReason?: DatabaseProblem };
 
 // Why the database cannot be used. Each kind has a message that is safe to show to visitors: it names
 // the cause and the fix, but never the connection string, host names, username or password.
@@ -153,13 +154,46 @@ async function getDb(): Promise<Db> {
 
 const indexReady = new Map<string, Promise<void>>();
 
+// Demo mode: when MONGODB_URI is missing, or the database cannot be reached, every collection is
+// served from memory (lib/server/memoryStore.ts) with sample data, so the whole admin panel can still
+// be tried. Changes then last only until the server restarts. The admin pages show a warning banner.
+function switchToDemo(err: unknown): DatabaseProblem | null {
+  if (err instanceof DatabaseConfigError || err instanceof DatabaseUnavailableError) {
+    if (!globalForMongo.megDemoReason) console.warn(`[database] Using the in-memory demo store: ${err.message}`);
+    globalForMongo.megDemoReason = err.problem;
+    return err.problem;
+  }
+  return null;
+}
+
+async function databaseOrDemo(): Promise<Db | null> {
+  if (globalForMongo.megDemoReason) return null;
+  try {
+    return await getDb();
+  } catch (err) {
+    if (switchToDemo(err)) return null;
+    throw err;
+  }
+}
+
+export type DatabaseStatus = { mode: "database" } | { mode: "demo"; problem: DatabaseProblem; message: string };
+
+// Whether the app is using the real database or the in-memory demo store.
+export async function getDatabaseStatus(): Promise<DatabaseStatus> {
+  const db = await databaseOrDemo();
+  if (db) return { mode: "database" };
+  const problem = globalForMongo.megDemoReason ?? "unknown";
+  return { mode: "demo", problem, message: DATABASE_PROBLEM_MESSAGES[problem] };
+}
+
 // Returns a typed collection and makes sure its indexes exist (created once per process). The indexes
 // list says which fields must be unique; MongoDB enforces them, so racing writes cannot both succeed.
 export async function getCollection<T extends { _id: string } & Document>(
   name: string,
   indexes: IndexDescription[] = [],
 ): Promise<Collection<T>> {
-  const db = await getDb();
+  const db = await databaseOrDemo();
+  if (!db) return memoryCollection<T>(name, indexes);
   const collection = db.collection<T>(name);
   if (indexes.length > 0) {
     let ready = indexReady.get(name);

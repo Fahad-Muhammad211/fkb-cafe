@@ -5,7 +5,7 @@
 import "server-only";
 import { MongoError } from "mongodb";
 import { readBody, apiError, json, text, trustedClientIp } from "@/lib/server/http";
-import { DatabaseConfigError, DatabaseUnavailableError, databaseErrorResponse } from "@/lib/server/collections";
+import { DatabaseConfigError, DatabaseUnavailableError, databaseErrorResponse, getDatabaseStatus } from "@/lib/server/collections";
 import { createCustomer, verifyCustomer, changeCustomerPassword, listCustomers, updateCustomerProfile } from "@/lib/server/customers";
 import { createAdditionalAdminAccount, createAdminSignupAccount, createManagerAccount, createOwnerAccount, deleteOwnerAccount, hasAdminAccounts, listStaff, updateStaff, verifyAdminCredentials } from "@/lib/server/adminAccounts";
 import { endAdminSession, getAdminSession, cleanDemoName, demoAccount, startAdminSession, startDemoSession } from "@/lib/server/adminSession";
@@ -423,6 +423,15 @@ const routes: Route[] = [
     },
   },
 
+  {
+    // Whether the real database is connected, or the in-memory demo store is in use.
+    method: "GET",
+    pattern: /^\/api\/status$/,
+    handler: async () => {
+      const status = await getDatabaseStatus();
+      return json(status.mode === "demo" ? { mode: "demo", message: status.message } : { mode: "database" });
+    },
+  },
   // Staff and admin accounts
   {
     // The signed-in staff member, or null. The admin pages read this to decide what to show; every
