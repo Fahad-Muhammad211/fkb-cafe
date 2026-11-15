@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ArrowLeft, MapPin, Phone } from "lucide-react";
 import { cancelOrder, findOrder, ordersStore, parseOrders, saveAllOrders } from "@/lib/orders";
 import { formatPKR } from "@/lib/format";
-import { currentStepIndex, isAwaitingConfirmation, isDelivered, statusLabel } from "@/lib/orderStatus";
+import { currentStepIndex, isAwaitingConfirmation, isCancelled, isDelivered, statusLabel, stepTimes } from "@/lib/orderStatus";
+import { ETA_MINUTES } from "@/lib/constants";
 import { OrderTimeline } from "@/components/orders/OrderTimeline";
 import type { Order } from "@/types";
 
@@ -108,6 +109,8 @@ export function OrderDetail({ id }: { id: string }) {
         </p>
       </header>
 
+      <LiveStatus order={order} index={index} />
+
       {invoiceNumber && (
         <section aria-label="Invoice and token" className="grid grid-cols-2 gap-3 sm:max-w-md">
           <div className="rounded-2xl bg-[#ffd400] p-4 text-black">
@@ -175,13 +178,19 @@ export function OrderDetail({ id }: { id: string }) {
               <dt>{isDelivery ? "Delivery fee" : "Pickup"}</dt>
               <dd>{isDelivery ? formatPKR(order.deliveryFee) : "Free"}</dd>
             </div>
+            {(order.discount ?? 0) > 0 && (
+              <div className="flex justify-between text-emerald-400">
+                <dt>Card discount</dt>
+                <dd>− {formatPKR(order.discount ?? 0)}</dd>
+              </div>
+            )}
             <div className="flex justify-between border-t border-zinc-800 pt-3 text-base font-bold">
               <dt>Total</dt>
               <dd>{formatPKR(order.total)}</dd>
             </div>
           </dl>
           <p className="mt-4 text-xs text-zinc-500">
-            Payment: Cash on Delivery ({order.paymentStatus === "paid" ? "paid" : order.paymentStatus === "cancelled" ? "cancelled" : "unpaid"})
+            Payment: {order.payment === "card" ? "Card" : "Cash"} on {isDelivery ? "delivery" : "pickup"} ({order.paymentStatus === "paid" ? "paid" : order.paymentStatus === "cancelled" ? "cancelled" : "unpaid"})
           </p>
         </section>
 
@@ -220,5 +229,52 @@ export function OrderDetail({ id }: { id: string }) {
         </section>
       </div>
     </div>
+  );
+}
+
+// Where the food is right now, the time left and the rider, refreshed with the order every few seconds.
+function LiveStatus({ order, index }: { order: Order; index: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  if (isCancelled(order)) return null;
+  const delivery = order.fulfilment === "delivery";
+  const messages = [
+    "Order sent. Waiting for the restaurant to see it…",
+    "The restaurant has seen your order ✓",
+    "Your food is being prepared in the kitchen 👨‍🍳",
+    delivery ? `Your food is with the rider and on the way 🛵` : "Your food is ready. Collect it at the counter 🛍️",
+    delivery ? "Delivered. Enjoy your meal!" : "Collected. Enjoy your meal!",
+  ];
+  const start = stepTimes(order).get(1);
+  const due = start ? Date.parse(start) + ETA_MINUTES[delivery ? "delivery" : "pickup"] * 60_000 : null;
+  const left = due ? due - now : null;
+  const done = index >= 4;
+  const mmss = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+  return (
+    <section aria-live="polite" className="grid gap-3 rounded-2xl border border-[#ffd400]/40 bg-[#ffd400]/10 p-5 sm:grid-cols-[1fr_auto]">
+      <div>
+        <p className="text-lg font-black">{messages[index] ?? messages[0]}</p>
+        {index >= 3 && delivery && order.riderName && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+            Rider: <b>{order.riderName}</b>
+            {order.riderPhone && (
+              <a href={`tel:${order.riderPhone}`} className="inline-flex items-center gap-1 rounded-full bg-[#ffd400] px-3 py-1 font-bold text-black">
+                <Phone className="h-3.5 w-3.5" aria-hidden="true" /> {order.riderPhone}
+              </a>
+            )}
+          </p>
+        )}
+      </div>
+      {!done && (
+        <div className="text-right">
+          <p className="text-xs uppercase tracking-wide text-zinc-400">{left === null ? "Time" : left > 0 ? "Time left" : "Running late"}</p>
+          <p className="text-3xl font-black tabular-nums">{left === null ? "—" : mmss(Math.abs(left))}</p>
+          {left === null && <p className="text-xs text-zinc-400">Starts when confirmed</p>}
+        </div>
+      )}
+    </section>
   );
 }

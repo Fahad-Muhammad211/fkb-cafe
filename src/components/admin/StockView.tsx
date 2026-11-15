@@ -1,5 +1,6 @@
 "use client";
 
+import { useCachedState } from "@/components/admin/cafe/CafeParts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, BookOpen, Boxes, History, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { stockApi } from "@/lib/cafeApi";
@@ -24,7 +25,7 @@ type Tab = "inventory" | "recipes" | "history";
 export function StockView() {
   const session = useSession<StaffSession>(getAdminSession);
   const canEditRecipes = session.state === "ready" && canAccess(session.value, "menu");
-  const [data, setData] = useState<StockSnapshot | null>(null);
+  const [data, setData] = useCachedState<StockSnapshot>("stock");
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("inventory");
 

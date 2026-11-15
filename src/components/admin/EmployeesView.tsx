@@ -6,6 +6,7 @@ import { ArrowRight, CalendarCheck, Eye, Pencil, Power, Search, ShieldCheck, Tra
 import { customerRequest, useCustomerData } from "@/components/customer/useCustomerData";
 import { DeleteOwnerDialog, dangerClass } from "@/components/admin/DeleteOwnerDialog";
 import { Button, Dialog, ErrorNote } from "@/components/admin/cafe/CafeParts";
+import { useCachedState } from "@/components/admin/cafe/CafeParts";
 import { staffApi, type StaffInput } from "@/lib/cafeApi";
 import type { CafeStaff, CafeStaffKind } from "@/lib/cafeTypes";
 import type { StaffRole } from "@/lib/permissions";
@@ -75,7 +76,7 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
 ];
 
 export function EmployeesView({ currentId }: { currentId: string }) {
-  const [staff, setStaff] = useState<CafeStaff[] | null>(null);
+  const [staff, setStaff] = useCachedState<CafeStaff[]>("staff");
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("directory");
   const [department, setDepartment] = useState<string>("all");

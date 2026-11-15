@@ -19,6 +19,11 @@ export const DELIVERY_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Fri
 export const DELIVERY_ESTIMATE_MINUTES = 45;
 
 // Flat delivery fee in PKR, applied to delivery orders (pick-up orders are free).
+// Paying by card (card machine at the door or counter) takes this share off the food subtotal.
+export const CARD_DISCOUNT_RATE = 0.1;
+// Promised times, counted from when the restaurant confirms the order.
+export const ETA_MINUTES = { delivery: 40, pickup: 20 } as const;
+
 export const DELIVERY_FEE = 150;
 
 export const CART_STORAGE_KEY = "meg-cart-v1";

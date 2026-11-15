@@ -64,7 +64,7 @@ export interface CartLine {
 
 export type FulfilmentType = "delivery" | "pickup";
 
-export type PaymentMethod = "cod";
+export type PaymentMethod = "cod" | "card";
 
 export interface CheckoutValues {
   name: string;
@@ -115,6 +115,10 @@ export interface Order {
   restaurantName?: string;
   // The rider assigned to deliver this order, or null when none is assigned.
   riderId?: string | null;
+  // Card discount taken off the total, and the rider who took a delivery out.
+  discount?: number;
+  riderName?: string;
+  riderPhone?: string;
 }
 
 export interface AuthUser {

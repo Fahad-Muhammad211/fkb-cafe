@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { AdminAuthGate } from "@/components/auth/SessionGates";
 
+// Session-dependent (redirects signed-in staff); skip instant-navigation validation, see (protected)/layout.tsx.
+export const instant = false;
+
 export const metadata: Metadata = {
   title: "Create admin account | Restaurant Management System",
   robots: { index: false, follow: false },

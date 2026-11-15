@@ -1,5 +1,5 @@
 import { randomInt } from "@/lib/server/random";
-import { DELIVERY_FEE } from "@/lib/constants";
+import { CARD_DISCOUNT_RATE, DELIVERY_FEE } from "@/lib/constants";
 import { ORDER_STEPS } from "@/lib/orderStatus";
 import { validateCheckout } from "@/lib/validation";
 import { extraOptionGroups } from "@/data/menuOptions";
@@ -195,7 +195,9 @@ export async function createOrder(input: unknown, userId: string | null): Promis
 
   const subtotal = lines.reduce((sum, l) => sum + l.total, 0);
   const deliveryFee = values.fulfilment === "delivery" ? DELIVERY_FEE : 0;
-  const total = subtotal + deliveryFee;
+  const payMethod = body.payment === "card" ? ("card" as const) : ("cod" as const);
+  const discount = payMethod === "card" ? Math.round(subtotal * CARD_DISCOUNT_RATE) : 0;
+  const total = subtotal + deliveryFee - discount;
   const now = new Date().toISOString();
   const shared = {
     createdAt: now,
@@ -208,7 +210,8 @@ export async function createOrder(input: unknown, userId: string | null): Promis
       notes: values.notes.trim(),
     },
     fulfilment: values.fulfilment,
-    payment: "cod" as const,
+    payment: payMethod,
+    discount,
     paymentStatus: "pending" as const,
     status: "pending" as const,
     lines,
@@ -227,7 +230,7 @@ export async function createOrder(input: unknown, userId: string | null): Promis
       orderId: id,
       amount: total,
       currency: "PKR",
-      method: "cod",
+      method: payMethod as "cod",
       status: "pending",
       createdAt: now,
       updatedAt: now,
@@ -312,12 +315,26 @@ export async function setOrderProgress(id: string, step: unknown): Promise<Order
     return exists ? notChangeable(id, "Confirm the order before changing its progress.") : { ok: false, status: 404, error: "Order not found." };
   }
   await (await historyCollection()).insertOne({ _id: `EVT-${id}-progress-${now}`, orderId: id, event: "progress", step, at: now, actor: "admin" });
+  if (step === 3) await sendRider(id);
   if (step === LAST_STEP) {
     // Delivered: take the recipe ingredients out of stock (once per order, see deductForOrder).
     const doc = await (await ordersCollection()).findOne({ _id: id }, { projection: { lines: 1 } });
     if (doc) await deductForOrder(id, doc.lines.map((l) => ({ productId: l.itemId, qty: l.qty })));
   }
   return loaded(id);
+}
+
+// Out for delivery: a rider from the Delivery staff takes the order (the one with the fewest active runs).
+async function sendRider(id: string) {
+  const orders = await ordersCollection();
+  const doc = await orders.findOne({ _id: id });
+  if (!doc || doc.fulfilment !== "delivery" || doc.riderName) return;
+  const riders = await (await getCollection<{ _id: string; name: string; phone: string; department?: string; active: boolean }>("cafe_staff")).find({ department: "Delivery", active: true }).toArray();
+  if (riders.length === 0) return;
+  const busy = await orders.find({ status: "confirmed", statusOverride: 3, riderName: { $in: riders.map((r) => r.name) } }).toArray();
+  const load = (name: string) => busy.filter((o) => o.riderName === name).length;
+  const rider = [...riders].sort((a, b) => load(a.name) - load(b.name))[0];
+  await orders.updateOne({ _id: id }, { $set: { riderName: rider.name, riderPhone: rider.phone } });
 }
 
 async function notChangeable(id: string, error: string): Promise<OrderResult> {

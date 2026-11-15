@@ -15,8 +15,50 @@ const POLL_MS = 5000;
 
 // The cafe state from the server, refreshed every few seconds so several screens (counter, kitchen,
 // a waiter's phone) stay in step. `refresh` reloads at once after an action.
+// Last data per screen, kept in the browser so switching pages shows it at once while it refreshes.
+export function readCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(`rms:${key}`);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+export function writeCache(key: string, value: unknown) {
+  try {
+    localStorage.setItem(`rms:${key}`, JSON.stringify(value));
+  } catch {
+    // Storage full or blocked: the page still works without the cache.
+  }
+}
+
+// useState that also remembers its last value in the browser (see readCache).
+export function useCachedState<T>(key: string): [T | null, (value: T) => void] {
+  const [value, setValue] = useState<T | null>(null);
+  useEffect(() => {
+    const cached = readCache<T>(key);
+    if (cached) queueMicrotask(() => setValue((cur) => cur ?? cached));
+  }, [key]);
+  const set = useCallback(
+    (v: T) => {
+      setValue(v);
+      writeCache(key, v);
+    },
+    [key],
+  );
+  return [value, set];
+}
+
 export function useCafe() {
-  const [snapshot, setSnapshot] = useState<CafeSnapshot | null>(null);
+  const [snapshot, setSnapshotState] = useState<CafeSnapshot | null>(null);
+  const setSnapshot = useCallback((s: CafeSnapshot) => {
+    setSnapshotState(s);
+    writeCache("cafe", s);
+  }, []);
+  useEffect(() => {
+    const cached = readCache<CafeSnapshot>("cafe");
+    if (cached) queueMicrotask(() => setSnapshotState((cur) => cur ?? cached));
+  }, []);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -27,7 +69,7 @@ export function useCafe() {
     } else {
       setError(res.error);
     }
-  }, []);
+  }, [setSnapshot]);
 
   useEffect(() => {
     let alive = true;
@@ -49,7 +91,13 @@ export function useMenu() {
   const [catalog, setCatalog] = useState<CatalogSnapshot | null>(null);
   useEffect(() => {
     let alive = true;
-    void fetchCatalog().then((c) => alive && setCatalog(c));
+    const cached = readCache<CatalogSnapshot>("menu");
+    if (cached) queueMicrotask(() => alive && setCatalog((cur) => cur ?? cached));
+    void fetchCatalog().then((c) => {
+      if (!alive || !c) return;
+      setCatalog(c);
+      writeCache("menu", c);
+    });
     return () => {
       alive = false;
     };
@@ -318,39 +366,35 @@ export function MenuPicker({ confirmLabel, onConfirm, busy, header }: { confirmL
           </button>
         ))}
       </div>
-      <ul className="grid gap-2 sm:grid-cols-2">
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {shown.map((p) => {
           const n = qty[p.id] ?? 0;
           const soldOut = p.stock === "out";
           return (
-            <li key={p.id} className={cn("flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5", n > 0 ? "border-[#ffd400]/60 bg-[#ffd400]/5" : "border-zinc-800 bg-zinc-950")}>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{p.name}</p>
-                <p className="text-xs text-zinc-400">{soldOut ? "Sold out" : formatPKR(p.price)}{p.pieces ? ` · ${p.pieces}` : ""}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {n > 0 && (
-                  <>
-                    <button type="button" aria-label={`Remove one ${p.name}`} onClick={() => change(p.id, -1)} className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700">
-                      <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                    <span className="w-5 text-center text-sm font-bold tabular-nums">{n}</span>
-                  </>
-                )}
-                <button
-                  type="button"
-                  aria-label={`Add ${p.name}`}
-                  disabled={soldOut}
-                  onClick={() => change(p.id, 1)}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ffd400] text-black hover:bg-[#ffe14d] disabled:opacity-30"
-                >
-                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              </div>
+            <li key={p.id} className={cn("relative overflow-hidden rounded-2xl border bg-zinc-950 transition-colors", n > 0 ? "border-[#ffd400]" : "border-zinc-800")}>
+              <button type="button" disabled={soldOut} onClick={() => change(p.id, 1)} aria-label={`Add ${p.name}`} className="block w-full text-left disabled:opacity-40">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {p.image ? <img src={p.image} alt="" loading="lazy" className="aspect-[4/3] w-full object-cover" /> : <div className="aspect-[4/3] w-full bg-zinc-800" />}
+                <div className="p-2.5">
+                  <p className="truncate text-sm font-bold">{p.name}</p>
+                  <p className="text-xs text-zinc-400">{soldOut ? "Sold out" : formatPKR(p.price)}{p.pieces ? ` · ${p.pieces}` : ""}</p>
+                </div>
+              </button>
+              {n > 0 && (
+                <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/80 p-1">
+                  <button type="button" aria-label={`Remove one ${p.name}`} onClick={() => change(p.id, -1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-700">
+                    <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <span className="w-5 text-center text-sm font-black tabular-nums text-[#ffd400]">{n}</span>
+                  <button type="button" aria-label={`Add one ${p.name}`} onClick={() => change(p.id, 1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-[#ffd400] text-black">
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
             </li>
           );
         })}
-        {shown.length === 0 && <li className="text-sm text-zinc-500">No items match.</li>}
+        {shown.length === 0 && <li className="col-span-full text-sm text-zinc-500">No items match.</li>}
       </ul>
       <div className="sticky -bottom-5 -mx-5 -mb-5 flex items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-900 px-5 py-4">
         <div className="text-sm">

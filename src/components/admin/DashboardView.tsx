@@ -1,5 +1,6 @@
 "use client";
 
+import { useCachedState } from "@/components/admin/cafe/CafeParts";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Boxes, CircleDollarSign, Receipt, TrendingUp } from "lucide-react";
@@ -23,7 +24,7 @@ const qty = (n: number) => (Math.round(n * 1000) / 1000).toLocaleString("en-US")
 
 // The Owner's dashboard. Every number comes from the database (see lib/server/dashboard.ts).
 export function DashboardView() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [data, setData] = useCachedState<DashboardData>("dashboard");
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {

@@ -77,6 +77,7 @@ export function placeOrder(draft: {
   clientOrderId: string;
   customer: Order["customer"];
   fulfilment: Order["fulfilment"];
+  payment?: Order["payment"];
   lines: CartLine[];
   restaurantId?: string;
 }): Promise<OrderActionResult> {

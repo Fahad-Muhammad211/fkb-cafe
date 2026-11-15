@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Banknote, Bike, Check, Store } from "lucide-react";
-import { DELIVERY_FEE } from "@/lib/constants";
+import { CARD_DISCOUNT_RATE, DELIVERY_FEE } from "@/lib/constants";
 import { LOCATION_KEY, parseLocation, saveLocation } from "@/lib/location";
 import { formatPKR } from "@/lib/format";
 import { createClientOrderId, placeOrder } from "@/lib/orders";
@@ -59,7 +59,9 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
   const isDelivery = values.fulfilment === "delivery";
   const subtotal = lines.reduce((sum, line) => sum + line.total, 0);
   const deliveryFee = isDelivery ? DELIVERY_FEE : 0;
-  const total = subtotal + deliveryFee;
+  const [payment, setPayment] = useState<"cod" | "card">("cod");
+  const discount = payment === "card" ? Math.round(subtotal * CARD_DISCOUNT_RATE) : 0;
+  const total = subtotal + deliveryFee - discount;
 
   const update = <K extends keyof CheckoutValues>(key: K, value: CheckoutValues[K]) =>
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -92,6 +94,7 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
         notes: values.notes.trim(),
       },
       fulfilment: values.fulfilment,
+      payment,
       lines,
       restaurantId: restaurantId || undefined,
     }).then((result) => {
@@ -287,11 +290,26 @@ export function CheckoutForm({ user, lines, onPlaced }: CheckoutFormProps) {
             <dt>{isDelivery ? "Delivery fee" : "Pickup"}</dt>
             <dd>{isDelivery ? formatPKR(deliveryFee) : "Free"}</dd>
           </div>
+          {discount > 0 && (
+            <div className="flex justify-between text-emerald-400">
+              <dt>Card discount ({Math.round(CARD_DISCOUNT_RATE * 100)}%)</dt>
+              <dd>− {formatPKR(discount)}</dd>
+            </div>
+          )}
           <div className="flex justify-between border-t border-zinc-800 pt-3 text-base font-bold">
             <dt>Total</dt>
             <dd>{formatPKR(total)}</dd>
           </div>
         </dl>
+        <div role="radiogroup" aria-label="Payment" className="mt-4 grid grid-cols-2 gap-2">
+          {([["cod", "Cash", "Pay when you get it"], ["card", "Card", `${Math.round(CARD_DISCOUNT_RATE * 100)}% off · card machine`]] as const).map(([v, label, hint]) => (
+            <button key={v} type="button" role="radio" aria-checked={payment === v} onClick={() => setPayment(v)}
+              className={`rounded-xl border px-3 py-2 text-left text-sm ${payment === v ? "border-[#ffd400] bg-[#ffd400]/10" : "border-zinc-700"}`}>
+              <span className="block font-bold">{label}</span>
+              <span className="text-xs text-zinc-400">{hint}</span>
+            </button>
+          ))}
+        </div>
         <button
           type="submit"
           disabled={placing}

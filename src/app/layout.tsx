@@ -35,7 +35,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${poppins.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-zinc-950 text-white">
+      <body suppressHydrationWarning className="flex min-h-full flex-col bg-zinc-950 text-white">
         <AuthProvider>
           <Suspense fallback={null}>
             <DataSync />
